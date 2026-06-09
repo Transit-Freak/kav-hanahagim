@@ -68,7 +68,6 @@
   @keyframes spin { to { transform: rotate(360deg); } }
   .spin { animation: spin .8s linear infinite; }
 
-  /* Leaflet marker styling */
   .leaflet-container { font-family: 'Assistant', sans-serif; background: var(--bg-deep); }
   .leaflet-control-attribution { font-size: 9px !important; background: rgba(255,255,255,0.6) !important; }
   [data-theme="dark"] .leaflet-control-attribution { background: rgba(10,12,16,0.6) !important; color: #889 !important; }
@@ -87,19 +86,6 @@
 </style>
 </head>
 <body>
-  <template id="__bundler_thumbnail">
-    <svg viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
-      <rect width="100" height="100" rx="22" fill="#1F5EE0"/>
-      <rect x="34" y="26" width="32" height="34" rx="6" fill="#fff"/>
-      <rect x="34" y="34" width="32" height="2.4" fill="#1F5EE0"/>
-      <circle cx="40" cy="54" r="2.4" fill="#1F5EE0"/>
-      <circle cx="60" cy="54" r="2.4" fill="#1F5EE0"/>
-      <rect x="38" y="60" width="3" height="6" rx="1.5" fill="#fff"/>
-      <rect x="59" y="60" width="3" height="6" rx="1.5" fill="#fff"/>
-      <path d="M50 70 q-9 0 -9 9" stroke="#fff" stroke-width="3" fill="none" stroke-linecap="round"/>
-      <circle cx="41" cy="79" r="4.5" fill="#fff"/>
-    </svg>
-  </template>
   <div id="app"></div>
 
   <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
@@ -109,6 +95,7 @@
   <script src="route.js"></script>
   <script src="gtfs.js"></script>
   <script src="geo.js"></script>
+  <script src="osrm.js"></script>
   <script type="text/babel" src="icons.jsx"></script>
   <script type="text/babel" src="LeafletMap.jsx"></script>
   <script type="text/babel" src="ui.jsx"></script>
@@ -139,8 +126,8 @@
       const initial = (location.hash || '').replace('#', '');
       const [screen, setScreen] = useState(['search', 'map'].includes(initial) ? initial : 'upload');
       const [route, setRoute] = useState(null);
-      const [feed, setFeed] = useState(null);     // real parsed GTFS, or null for demo
-      const [view, setView] = useState(null);     // buildTripView result for selected route
+      const [feed, setFeed] = useState(null);
+      const [view, setView] = useState(null);
       const toggle = () => setDark((d) => !d);
 
       useEffect(() => {
@@ -167,11 +154,9 @@
         setScreen('map');
       };
 
-      // resolve what MapScreen draws: real view if present, else demo feed
       const demo = window.GTFS_FEED;
       const trip = view ? view.trip : demo.trip;
       const geom = view ? view.geom : demo.geom;
-      const maneuvers = view ? [] : (demo.maneuvers || []);
       const mapRoute = route || demo.routes[0];
 
       let body;
@@ -182,7 +167,7 @@
       else if (screen === 'search')
         body = <SearchScreen dark={dark} onToggleDark={toggle} feed={feed} onSelect={selectRoute} />;
       else
-        body = <MapScreen route={mapRoute} trip={trip} geom={geom} maneuvers={maneuvers} dark={dark} onToggleDark={toggle}
+        body = <MapScreen route={mapRoute} trip={trip} geom={geom} dark={dark} onToggleDark={toggle}
           onBack={() => setScreen('search')} startF={0.28} />;
 
       return (
@@ -193,6 +178,7 @@
       );
     }
 
+    ReactMedia = null;
     ReactDOM.createRoot(document.getElementById('app')).render(<App />);
   </script>
 </body>
