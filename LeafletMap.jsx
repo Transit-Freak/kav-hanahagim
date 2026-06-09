@@ -1,78 +1,157 @@
-<!DOCTYPE html>
-<html lang="he" dir="rtl">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>קו הנהגים</title>
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Assistant:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<style>
-  * { box-sizing: border-box; }
-  html, body { margin: 0; padding: 0; min-height: 100%; }
-  body {
-    font-family: 'Assistant', system-ui, sans-serif; background: #0E1116; color: #EEF1F6;
-    -webkit-font-smoothing: antialiased; min-height: 100dvh;
-    display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 28px;
-  }
-  .wrap { width: 100%; max-width: 720px; }
-  .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 6px; }
-  .logo { width: 54px; height: 54px; border-radius: 15px; background: #1F5EE0; display: flex; align-items: center; justify-content: center; box-shadow: 0 6px 20px rgba(31,94,224,0.4); }
-  .logo svg { width: 30px; height: 30px; }
-  h1 { font-size: 30px; font-weight: 800; margin: 0; letter-spacing: -0.01em; }
-  .sub { color: #9AA4B2; font-size: 16px; margin: 4px 0 26px; line-height: 1.5; }
-  .cards { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
-  @media (max-width: 560px) { .cards { grid-template-columns: 1fr; } }
-  .card {
-    display: block; text-decoration: none; color: inherit; background: #171B22; border: 1px solid #262C36;
-    border-radius: 18px; padding: 22px; transition: border-color .15s, transform .15s, background .15s;
-  }
-  .card:hover { border-color: #6098FF; transform: translateY(-2px); background: #1A1F28; }
-  .ic { width: 46px; height: 46px; border-radius: 12px; display: flex; align-items: center; justify-content: center; margin-bottom: 14px; }
-  .ic svg { width: 26px; height: 26px; }
-  .card h2 { font-size: 19px; font-weight: 800; margin: 0 0 5px; }
-  .card p { font-size: 14px; color: #9AA4B2; margin: 0; line-height: 1.55; }
-  .tag { display: inline-block; font-size: 11px; font-weight: 700; padding: 3px 9px; border-radius: 99px; margin-top: 12px; }
-  .foot { color: #5E6675; font-size: 12.5px; margin-top: 24px; line-height: 1.6; }
-  .foot code { background: #1E242D; padding: 1px 6px; border-radius: 5px; font-family: ui-monospace, monospace; color: #9AA4B2; }
-</style>
-</head>
-<body>
-  <div class="wrap">
-    <div class="brand">
-      <div class="logo">
-        <svg viewBox="0 0 24 24" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="3" width="16" height="14" rx="2.5"/><path d="M4 11h16"/><path d="M7 21v-2M17 21v-2"/></svg>
+// Real interactive map (Leaflet) with a streets / satellite toggle.
+// Draws the route polyline, stop markers, and a live driver puck.
+const { useState: useStateLM, useEffect: useEffectLM, useRef: useRefLM, useMemo: useMemoLM } = React;
+
+function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, follow = true, dark = false, compact = false, toggleBottom = 16 }) {
+  const elRef = useRefLM(null);
+  const mapRef = useRefLM(null);
+  const layersRef = useRefLM({});
+  const routeRef = useRefLM({});
+  const stopRef = useRefLM([]);
+  const puckRef = useRefLM(null);
+  const fittedRef = useRefLM(false);
+  const pausedRef = useRefLM(false);
+  const [base, setBase] = useStateLM('streets');
+  const [offCenter, setOffCenter] = useStateLM(false);
+
+  const metrics = useMemoLM(() => window.Geo.polylineMetrics(geom), [geom]);
+
+  // ── init map once ───────────────────────────────────────────
+  useEffectLM(() => {
+    if (!elRef.current || mapRef.current) return;
+    const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, zoomSnap: 0.25 });
+    map.attributionControl.setPrefix('');
+    mapRef.current = map;
+
+    const streets = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
+      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
+    const streetsDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png',
+      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
+    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, attribution: '© Esri, Maxar' });
+    const satLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
+      { maxZoom: 19, opacity: 0.9 });
+    layersRef.current = { streets, streetsDark, sat, satLabels };
+    L.control.zoom({ position: 'topright' }).addTo(map);
+    map.setView([32.08, 34.78], 14);
+
+    // pause auto-follow as soon as the driver pans the map by hand
+    map.on('dragstart', () => { pausedRef.current = true; setOffCenter(true); });
+
+    setTimeout(() => map.invalidateSize(), 60);
+    const onResize = () => map.invalidateSize();
+    window.addEventListener('resize', onResize);
+    let ro;
+    if (typeof ResizeObserver !== 'undefined') {
+      ro = new ResizeObserver(() => map.invalidateSize());
+      ro.observe(elRef.current);
+    }
+    return () => { window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.remove(); mapRef.current = null; };
+  }, []);
+
+  // ── base layer switch ───────────────────────────────────────
+  useEffectLM(() => {
+    const map = mapRef.current; const L_ = layersRef.current; if (!map) return;
+    [L_.streets, L_.streetsDark, L_.sat, L_.satLabels].forEach((l) => l && map.hasLayer(l) && map.removeLayer(l));
+    if (base === 'satellite') { L_.sat.addTo(map); L_.satLabels.addTo(map); }
+    else { (dark ? L_.streetsDark : L_.streets).addTo(map); }
+  }, [base, dark]);
+
+  // ── build route + stop markers when geometry changes ────────
+  useEffectLM(() => {
+    const map = mapRef.current; if (!map || metrics.pts.length < 2) return;
+    Object.values(routeRef.current).forEach((l) => l && map.removeLayer(l));
+    stopRef.current.forEach((m) => map.removeLayer(m.marker));
+    stopRef.current = [];
+
+    const casing = L.polyline(metrics.pts, { color: '#ffffff', weight: 11, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map);
+    const ahead = L.polyline(metrics.pts, { color: '#1F5EE0', weight: 6.5, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(map);
+    const traveled = L.polyline([], { color: '#9AA6BC', weight: 6.5, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map);
+    routeRef.current = { casing, ahead, traveled };
+
+    stops.forEach((s) => {
+      if (!isFinite(s.lat) || !isFinite(s.lon)) return;
+      const icon = L.divIcon({ className: 'stop-ico', html: '<span class="dot"></span>', iconSize: [18, 18], iconAnchor: [9, 9] });
+      const marker = L.marker([s.lat, s.lon], { icon, keyboard: false, interactive: false }).addTo(map);
+      stopRef.current.push({ marker, f: s.f != null ? s.f : metrics.locate(s.lat, s.lon), id: s.id, last: s.seq === stops.length });
+    });
+
+    const puckIcon = L.divIcon({ className: 'puck-ico', html: '<span class="ring"></span><span class="core"><svg viewBox="0 0 24 24"><path d="M12 3 L18 20 L12 16 L6 20 Z"/></svg></span>', iconSize: [40, 40], iconAnchor: [20, 20] });
+    if (puckRef.current) { map.removeLayer(puckRef.current); puckRef.current = null; }
+    puckRef.current = L.marker(metrics.pointAt(driverF), { icon: puckIcon, keyboard: false, interactive: false, zIndexOffset: 1000 }).addTo(map);
+
+    fittedRef.current = false;
+    if (!follow) { map.fitBounds(casing.getBounds(), { padding: [34, 34] }); fittedRef.current = true; }
+    // eslint-disable-next-line
+  }, [metrics, stops]);
+
+  // ── live update: puck, traveled split, next-stop highlight ──
+  useEffectLM(() => {
+    const map = mapRef.current; const r = routeRef.current; if (!map || !r.ahead || metrics.pts.length < 2) return;
+    const here = metrics.pointAt(driverF);
+
+    // split polyline at driverF -> traveled (behind) vs ahead
+    let idx = 0; const target = driverF * metrics.total;
+    while (idx < metrics.cum.length && metrics.cum[idx] < target) idx++;
+    const behind = metrics.pts.slice(0, idx).concat([here]);
+    const front = [here].concat(metrics.pts.slice(idx));
+    r.traveled.setLatLngs(behind);
+    r.ahead.setLatLngs(front);
+
+    if (puckRef.current) {
+      puckRef.current.setLatLng(here);
+      const el = puckRef.current.getElement();
+      if (el) { const core = el.querySelector('.core'); if (core) core.style.transform = `rotate(${metrics.bearingAt(driverF)}deg)`; }
+    }
+
+    // next stop = first not-yet-passed
+    let nextId = null;
+    for (const sm of stopRef.current) { if (sm.f > driverF - 0.004) { nextId = sm.id; break; } }
+    stopRef.current.forEach((sm) => {
+      const el = sm.marker.getElement(); if (!el) return;
+      el.classList.toggle('passed', sm.f < driverF - 0.006);
+      el.classList.toggle('next', sm.id === (focusStopId || nextId));
+      el.classList.toggle('last', !!sm.last);
+    });
+
+    if (follow && fittedRef.current === false) { map.setView(here, 16); fittedRef.current = true; }
+    else if (follow && !pausedRef.current) { map.panTo(here, { animate: true, duration: 0.5 }); }
+  }, [driverF, focusStopId, metrics, follow, base]);
+
+  const recenter = () => {
+    const map = mapRef.current; if (!map || !puckRef.current) return;
+    pausedRef.current = false; setOffCenter(false);
+    map.setView(puckRef.current.getLatLng(), Math.max(map.getZoom(), 16), { animate: true });
+  };
+
+  return (
+    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+      <div ref={elRef} style={{ position: 'absolute', inset: 0, background: dark ? '#0c0f14' : '#e8eaed' }} />
+      {/* recenter on driver */}
+      {follow && offCenter && (
+        <button onClick={recenter} aria-label="מרכז על הנהג" style={{
+          position: 'absolute', bottom: typeof toggleBottom === 'number' ? toggleBottom + 52 : toggleBottom, insetInlineEnd: 12, zIndex: 500,
+          width: 46, height: 46, borderRadius: 13, border: 'none', cursor: 'pointer',
+          background: 'var(--accent, #1F5EE0)', color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 3px 12px rgba(0,0,0,0.3)',
+        }}>
+          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
+        </button>
+      )}
+      {/* streets / satellite toggle */}
+      <div style={{ position: 'absolute', bottom: toggleBottom, insetInlineStart: 12, zIndex: 500, display: 'flex', background: 'var(--surface, #fff)', borderRadius: 11, padding: 3, boxShadow: '0 2px 10px rgba(0,0,0,0.25)', gap: 2 }}>
+        {[['streets', 'מפה'], ['satellite', 'לוויין']].map(([k, label]) => (
+          <button key={k} onClick={() => setBase(k)} style={{
+            border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 13,
+            padding: '7px 14px', borderRadius: 8,
+            background: base === k ? 'var(--accent, #1F5EE0)' : 'transparent',
+            color: base === k ? '#fff' : 'var(--text-mut, #5B6472)',
+          }}>{label}</button>
+        ))}
       </div>
-      <div>
-        <h1>קו הנהגים</h1>
-      </div>
     </div>
-    <div class="sub">ניווט ומעקב לנהגי תחבורה ציבורית — מבוסס נתוני GTFS, מפה אמיתית ותצלום לוויין.</div>
+  );
+}
 
-    <div class="cards">
-      <a class="card" href="קו הנהגים.html">
-        <div class="ic" style="background: rgba(96,152,255,0.15); color: #6098FF;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.3 7-11a7 7 0 10-14 0c0 4.7 7 11 7 11z"/><circle cx="12" cy="10" r="2.5"/></svg>
-        </div>
-        <h2>אפליקציית הנהג</h2>
-        <p>טעינת GTFS, חיפוש קו/מק״ט, ומסך נהיגה עם מפה, תחנות וחיווי ניווט.</p>
-        <span class="tag" style="background: rgba(96,152,255,0.15); color: #6098FF;">לטלפון / לכל מכשיר</span>
-      </a>
-
-      <a class="card" href="בדיקת מנוע GTFS.html">
-        <div class="ic" style="background: rgba(52,199,123,0.15); color: #34C77B;">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2v4M12 18v4M4.9 4.9l2.8 2.8M16.3 16.3l2.8 2.8M2 12h4M18 12h4M4.9 19.1l2.8-2.8M16.3 7.7l2.8-2.8"/></svg>
-        </div>
-        <h2>בדיקת מנוע GTFS</h2>
-        <p>כלי אבחון: קריאת הקובץ, ספירות, תצוגת מסלול, הדמיית נסיעה וחיבור OSRM.</p>
-        <span class="tag" style="background: rgba(224,162,58,0.15); color: #E0A23A;">ניסיוני · למחשב</span>
-      </a>
-    </div>
-
-    <div class="foot">
-      להעלאה ל-GitHub Pages: דחפו את כל הקבצים, ואז <code>Settings → Pages → Deploy from branch → main / root</code>.
-      הכל סטטי — המפה, הלוויין ו-OSRM נטענים מהדפדפן. אין צורך בשרת.
-    </div>
-  </div>
-</body>
-</html>
+window.LeafletMap = LeafletMap;

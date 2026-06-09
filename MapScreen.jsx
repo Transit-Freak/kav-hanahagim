@@ -1,157 +1,134 @@
-// Real interactive map (Leaflet) with a streets / satellite toggle.
-// Draws the route polyline, stop markers, and a live driver puck.
-const { useState: useStateLM, useEffect: useEffectLM, useRef: useRefLM, useMemo: useMemoLM } = React;
+// Central driving screen — real map (Leaflet) with the route, stops and a live driver puck.
+const { useState: useStateMS, useEffect: useEffectMS, useRef: useRefMS, useMemo: useMemoMS } = React;
 
-function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, follow = true, dark = false, compact = false, toggleBottom = 16 }) {
-  const elRef = useRefLM(null);
-  const mapRef = useRefLM(null);
-  const layersRef = useRefLM({});
-  const routeRef = useRefLM({});
-  const stopRef = useRefLM([]);
-  const puckRef = useRefLM(null);
-  const fittedRef = useRefLM(false);
-  const pausedRef = useRefLM(false);
-  const [base, setBase] = useStateLM('streets');
-  const [offCenter, setOffCenter] = useStateLM(false);
-
-  const metrics = useMemoLM(() => window.Geo.polylineMetrics(geom), [geom]);
-
-  // ── init map once ───────────────────────────────────────────
-  useEffectLM(() => {
-    if (!elRef.current || mapRef.current) return;
-    const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, zoomSnap: 0.25 });
-    map.attributionControl.setPrefix('');
-    mapRef.current = map;
-
-    const streets = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
-    const streetsDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png',
-      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
-    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 19, attribution: '© Esri, Maxar' });
-    const satLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 19, opacity: 0.9 });
-    layersRef.current = { streets, streetsDark, sat, satLabels };
-    L.control.zoom({ position: 'topright' }).addTo(map);
-    map.setView([32.08, 34.78], 14);
-
-    // pause auto-follow as soon as the driver pans the map by hand
-    map.on('dragstart', () => { pausedRef.current = true; setOffCenter(true); });
-
-    setTimeout(() => map.invalidateSize(), 60);
-    const onResize = () => map.invalidateSize();
-    window.addEventListener('resize', onResize);
-    let ro;
-    if (typeof ResizeObserver !== 'undefined') {
-      ro = new ResizeObserver(() => map.invalidateSize());
-      ro.observe(elRef.current);
-    }
-    return () => { window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.remove(); mapRef.current = null; };
-  }, []);
-
-  // ── base layer switch ───────────────────────────────────────
-  useEffectLM(() => {
-    const map = mapRef.current; const L_ = layersRef.current; if (!map) return;
-    [L_.streets, L_.streetsDark, L_.sat, L_.satLabels].forEach((l) => l && map.hasLayer(l) && map.removeLayer(l));
-    if (base === 'satellite') { L_.sat.addTo(map); L_.satLabels.addTo(map); }
-    else { (dark ? L_.streetsDark : L_.streets).addTo(map); }
-  }, [base, dark]);
-
-  // ── build route + stop markers when geometry changes ────────
-  useEffectLM(() => {
-    const map = mapRef.current; if (!map || metrics.pts.length < 2) return;
-    Object.values(routeRef.current).forEach((l) => l && map.removeLayer(l));
-    stopRef.current.forEach((m) => map.removeLayer(m.marker));
-    stopRef.current = [];
-
-    const casing = L.polyline(metrics.pts, { color: '#ffffff', weight: 11, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-    const ahead = L.polyline(metrics.pts, { color: '#1F5EE0', weight: 6.5, opacity: 1, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-    const traveled = L.polyline([], { color: '#9AA6BC', weight: 6.5, opacity: 0.95, lineJoin: 'round', lineCap: 'round' }).addTo(map);
-    routeRef.current = { casing, ahead, traveled };
-
-    stops.forEach((s) => {
-      if (!isFinite(s.lat) || !isFinite(s.lon)) return;
-      const icon = L.divIcon({ className: 'stop-ico', html: '<span class="dot"></span>', iconSize: [18, 18], iconAnchor: [9, 9] });
-      const marker = L.marker([s.lat, s.lon], { icon, keyboard: false, interactive: false }).addTo(map);
-      stopRef.current.push({ marker, f: s.f != null ? s.f : metrics.locate(s.lat, s.lon), id: s.id, last: s.seq === stops.length });
-    });
-
-    const puckIcon = L.divIcon({ className: 'puck-ico', html: '<span class="ring"></span><span class="core"><svg viewBox="0 0 24 24"><path d="M12 3 L18 20 L12 16 L6 20 Z"/></svg></span>', iconSize: [40, 40], iconAnchor: [20, 20] });
-    if (puckRef.current) { map.removeLayer(puckRef.current); puckRef.current = null; }
-    puckRef.current = L.marker(metrics.pointAt(driverF), { icon: puckIcon, keyboard: false, interactive: false, zIndexOffset: 1000 }).addTo(map);
-
-    fittedRef.current = false;
-    if (!follow) { map.fitBounds(casing.getBounds(), { padding: [34, 34] }); fittedRef.current = true; }
-    // eslint-disable-next-line
-  }, [metrics, stops]);
-
-  // ── live update: puck, traveled split, next-stop highlight ──
-  useEffectLM(() => {
-    const map = mapRef.current; const r = routeRef.current; if (!map || !r.ahead || metrics.pts.length < 2) return;
-    const here = metrics.pointAt(driverF);
-
-    // split polyline at driverF -> traveled (behind) vs ahead
-    let idx = 0; const target = driverF * metrics.total;
-    while (idx < metrics.cum.length && metrics.cum[idx] < target) idx++;
-    const behind = metrics.pts.slice(0, idx).concat([here]);
-    const front = [here].concat(metrics.pts.slice(idx));
-    r.traveled.setLatLngs(behind);
-    r.ahead.setLatLngs(front);
-
-    if (puckRef.current) {
-      puckRef.current.setLatLng(here);
-      const el = puckRef.current.getElement();
-      if (el) { const core = el.querySelector('.core'); if (core) core.style.transform = `rotate(${metrics.bearingAt(driverF)}deg)`; }
-    }
-
-    // next stop = first not-yet-passed
-    let nextId = null;
-    for (const sm of stopRef.current) { if (sm.f > driverF - 0.004) { nextId = sm.id; break; } }
-    stopRef.current.forEach((sm) => {
-      const el = sm.marker.getElement(); if (!el) return;
-      el.classList.toggle('passed', sm.f < driverF - 0.006);
-      el.classList.toggle('next', sm.id === (focusStopId || nextId));
-      el.classList.toggle('last', !!sm.last);
-    });
-
-    if (follow && fittedRef.current === false) { map.setView(here, 16); fittedRef.current = true; }
-    else if (follow && !pausedRef.current) { map.panTo(here, { animate: true, duration: 0.5 }); }
-  }, [driverF, focusStopId, metrics, follow, base]);
-
-  const recenter = () => {
-    const map = mapRef.current; if (!map || !puckRef.current) return;
-    pausedRef.current = false; setOffCenter(false);
-    map.setView(puckRef.current.getLatLng(), Math.max(map.getZoom(), 16), { animate: true });
-  };
-
+function TripHeader({ route, trip, dark, onToggleDark, onBack }) {
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
-      <div ref={elRef} style={{ position: 'absolute', inset: 0, background: dark ? '#0c0f14' : '#e8eaed' }} />
-      {/* recenter on driver */}
-      {follow && offCenter && (
-        <button onClick={recenter} aria-label="מרכז על הנהג" style={{
-          position: 'absolute', bottom: typeof toggleBottom === 'number' ? toggleBottom + 52 : toggleBottom, insetInlineEnd: 12, zIndex: 500,
-          width: 46, height: 46, borderRadius: 13, border: 'none', cursor: 'pointer',
-          background: 'var(--accent, #1F5EE0)', color: '#fff',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          boxShadow: '0 3px 12px rgba(0,0,0,0.3)',
-        }}>
-          <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
-        </button>
-      )}
-      {/* streets / satellite toggle */}
-      <div style={{ position: 'absolute', bottom: toggleBottom, insetInlineStart: 12, zIndex: 500, display: 'flex', background: 'var(--surface, #fff)', borderRadius: 11, padding: 3, boxShadow: '0 2px 10px rgba(0,0,0,0.25)', gap: 2 }}>
-        {[['streets', 'מפה'], ['satellite', 'לוויין']].map(([k, label]) => (
-          <button key={k} onClick={() => setBase(k)} style={{
-            border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 13,
-            padding: '7px 14px', borderRadius: 8,
-            background: base === k ? 'var(--accent, #1F5EE0)' : 'transparent',
-            color: base === k ? '#fff' : 'var(--text-mut, #5B6472)',
-          }}>{label}</button>
-        ))}
+    <div style={{
+      display: 'flex', alignItems: 'center', gap: 11, padding: '10px 14px',
+      background: 'var(--surface)', borderBottom: '1px solid var(--hair)', position: 'relative', zIndex: 5,
+    }}>
+      <button onClick={onBack} aria-label="חזרה" style={{ border: 'none', background: 'var(--chip)', width: 38, height: 38, borderRadius: 11, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text)', flexShrink: 0 }}>
+        <IconChevron size={20} style={{ transform: 'scaleX(-1)' }} />
+      </button>
+      <RouteBadge num={route.shortName} size={40} dark={dark} />
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+          <span style={{ fontWeight: 800, fontSize: 16.5, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{trip.headsign}</span>
+        </div>
+        <div style={{ fontSize: 12.5, color: 'var(--text-mut)', display: 'flex', gap: 8, marginTop: 1 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />בנסיעה
+          </span>
+          <span>· יציאה {trip.departure}</span>
+        </div>
+      </div>
+      <DayNightToggle dark={dark} onToggle={onToggleDark} />
+    </div>
+  );
+}
+
+const EXIT_HE = ['', 'הראשונה', 'השנייה', 'השלישית', 'הרביעית', 'החמישית'];
+
+// Turn-by-turn maneuver cue (roundabout / sharp turn) — mirrors what an OSRM
+// map-matching pass would produce. Louder styling than the stop cue.
+function ManeuverBanner({ mv }) {
+  const Ico = mv.kind === 'roundabout' ? IconRoundabout : mv.kind === 'right' ? IconTurnRight : IconTurnLeft;
+  const m = Math.max(0, mv.meters);
+  const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
+  const title = mv.kind === 'roundabout' ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
+    : mv.kind === 'right' ? 'פנו ימינה' : 'פנו שמאלה';
+  return (
+    <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
+        <div style={{ width: 56, height: 56, borderRadius: 16, background: 'rgba(255,255,255,0.18)', display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+          <Ico size={36} style={{ color: '#fff' }} />
+        </div>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.9 }}>בעוד {dist}</div>
+          <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+          {mv.street && <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.92, marginTop: 1 }}>אל {mv.street}</div>}
+        </div>
+      </div>
+      <div style={{ marginTop: 9, fontSize: 11, fontWeight: 700, opacity: 0.75, display: 'flex', alignItems: 'center', gap: 6 }}>
+        <span style={{ width: 6, height: 6, borderRadius: 99, background: '#fff', opacity: 0.7 }} />
+        הדמיה · ידרוש מנוע ניתוב (OSRM) בחיבור אמיתי
       </div>
     </div>
   );
 }
 
-window.LeafletMap = LeafletMap;
+function MapScreen({ route, trip, geom, maneuvers = [], dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
+  const [driverF, setDriverF] = useStateMS(startF);
+  const [focus, setFocus] = useStateMS(null);
+  const [sheetOpen, setSheetOpen] = useStateMS(false);
+  const stops = trip.stops;
+  const metrics = useMemoMS(() => window.Geo.polylineMetrics(geom || []), [geom]);
+
+  useEffectMS(() => {
+    if (!animate) return;
+    let raf, last;
+    const tick = (t) => {
+      if (last != null) {
+        const dt = (t - last) / 1000;
+        setDriverF((f) => { const n = f + dt / 200; return n > 1.01 ? startF : n; });
+      }
+      last = t;
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [animate, startF]);
+
+  const focusStop = (s) => { setFocus(s.id); setTimeout(() => setFocus((cur) => cur === s.id ? null : cur), 4000); };
+  const nextStop = stops.find((s) => s.f > driverF) || stops[stops.length - 1];
+
+  // real remaining distance (m) along the route to the next stop, and the turn there
+  const metersToNext = nextStop ? Math.max(0, (nextStop.f - driverF) * metrics.total) : 0;
+  const maneuver = nextStop ? metrics.maneuverAt(nextStop.f) : 'straight';
+
+  // upcoming explicit maneuver (e.g. roundabout) — what an OSRM map-matching pass
+  // would surface. Show it when within ~320 m ahead; takes over the cue banner.
+  const upcomingMv = maneuvers
+    .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
+    .filter((mv) => mv.meters > -20 && mv.meters < 320)
+    .sort((a, b) => a.meters - b.meters)[0] || null;
+
+  return (
+    <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
+      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} />
+      <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+        <LeafletMap geom={geom} stops={stops} driverF={driverF} focusStopId={focus} dark={dark} follow compact toggleBottom={sheetOpen ? '62%' : 164} />
+
+        {/* floating navigation cue */}
+        <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
+          {upcomingMv
+            ? <ManeuverBanner mv={upcomingMv} />
+            : <NextStopBanner stop={nextStop} meters={metersToNext} dark={dark} maneuver={maneuver} compact />}
+        </div>
+
+        {/* bottom sheet with the stop list */}
+        <div style={{
+          position: 'absolute', left: 0, right: 0, bottom: 0, zIndex: 600,
+          background: 'var(--surface)', borderRadius: '22px 22px 0 0',
+          boxShadow: '0 -8px 30px rgba(0,0,0,0.20)',
+          height: sheetOpen ? '60%' : 150, transition: 'height .32s cubic-bezier(.4,0,.2,1)',
+          display: 'flex', flexDirection: 'column', overflow: 'hidden',
+        }}>
+          <button onClick={() => setSheetOpen((v) => !v)} style={{ border: 'none', background: 'none', cursor: 'pointer', padding: '10px 0 6px', fontFamily: 'inherit' }}>
+            <div style={{ width: 38, height: 5, borderRadius: 99, background: 'var(--rail)', margin: '0 auto' }} />
+          </button>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '2px 18px 8px' }}>
+            <div style={{ fontWeight: 800, fontSize: 16, color: 'var(--text)' }}>תחנות המסלול</div>
+            <div style={{ fontSize: 13, color: 'var(--text-mut)', fontWeight: 700 }}>{stops.length} תחנות</div>
+          </div>
+          <div style={{ flex: 1, overflow: 'auto', padding: '0 4px 16px' }}>
+            <StopsTimeline stops={stops} driverF={driverF} onStopClick={focusStop} focusStopId={focus} dense={!sheetOpen} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+window.MapScreen = MapScreen;
+window.TripHeader = TripHeader;

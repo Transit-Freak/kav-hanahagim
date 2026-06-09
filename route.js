@@ -1,89 +1,35 @@
-/* Live OSRM connector — turns a GTFS route shape into real turn-by-turn
-   maneuvers (including roundabout exit numbers) via an OSRM server.
+// Demo feed shaped like a parsed GTFS result, with REAL Tel Aviv coordinates
+// so the live map renders the route on actual streets.
+//   route -> trip -> geom (lat/lon polyline) + stop_times (ordered stops w/ planned time)
+//   f = fraction (0..1) along the geometry where each stop sits.
 
-   Why /route and not /match: the public demo server blocks /match ("TooBig").
-   /route normally picks the fastest CAR path (wrong for a bus), BUT when fed the
-   real, dense GTFS shape as many waypoints, it has no room to deviate and simply
-   reproduces the bus path — verified: a real 9 km shape comes back at 9 km exactly.
-   A sanity check rejects results that wandered (synthetic/off-road shapes).
+window.GTFS_FEED = {
+  agency: { name: 'דן', id: '2' },
 
-   window.OSRM.maneuvers(geom, { server }) -> { ok, maneuvers:[{f,kind,exit,name,text}], ... }
-*/
-(function () {
-  const DEFAULT_SERVER = 'https://router.project-osrm.org';
+  routes: [
+    { id: 'r5',   shortName: '5',   makat: '23045', agency: 'דן',  desc: 'ת. רכבת ההגנה ⟵ נמל תל אביב', type: 'אוטובוס' },
+    { id: 'r18',  shortName: '18',  makat: '15183', agency: 'דן',  desc: 'בת ים ⟵ אוניברסיטת ת"א',        type: 'אוטובוס' },
+    { id: 'r480', shortName: '480', makat: '10480', agency: 'אגד', desc: 'תל אביב ⟵ ירושלים',            type: 'אוטובוס' },
+    { id: 'r189', shortName: '189', makat: '21890', agency: 'דן',  desc: 'הרצליה ⟵ ת"א סבידור',          type: 'אוטובוס' },
+    { id: 'r66',  shortName: '66',  makat: '16066', agency: 'קווים', desc: 'ראשל"צ ⟵ חולון',             type: 'אוטובוס' },
+  ],
 
-  const MOD_TURN = {
-    'left': 'left', 'slight left': 'left', 'sharp left': 'left',
-    'right': 'right', 'slight right': 'right', 'sharp right': 'right',
-  };
+  // shapes.txt as a lat/lon polyline (densified) — drawn on the real map
+  geom: [[32.0558,34.7935],[32.056957,34.793257],[32.058114,34.793014],[32.059271,34.792771],[32.060429,34.792529],[32.061586,34.792286],[32.062743,34.792043],[32.0639,34.7918],[32.064943,34.790986],[32.065986,34.790171],[32.067029,34.789357],[32.068071,34.788543],[32.069114,34.787729],[32.070157,34.786914],[32.0712,34.7861],[32.072571,34.785486],[32.073943,34.784871],[32.075314,34.784257],[32.076686,34.783643],[32.078057,34.783029],[32.079429,34.782414],[32.0808,34.7818],[32.081414,34.781686],[32.082029,34.781571],[32.082643,34.781457],[32.083257,34.781343],[32.083871,34.781229],[32.084486,34.781114],[32.0851,34.781],[32.085829,34.780886],[32.086557,34.780771],[32.087286,34.780657],[32.088014,34.780543],[32.088743,34.780429],[32.089471,34.780314],[32.0902,34.7802],[32.091,34.780071],[32.0918,34.779943],[32.0926,34.779814],[32.0934,34.779686],[32.0942,34.779557],[32.095,34.779429],[32.0958,34.7793],[32.096143,34.778657],[32.096486,34.778014],[32.096829,34.777371],[32.097171,34.776729],[32.097514,34.776086],[32.097857,34.775443],[32.0982,34.7748],[32.098343,34.774286],[32.098486,34.773771],[32.098629,34.773257],[32.098771,34.772743],[32.098914,34.772229],[32.099057,34.771714],[32.0992,34.7712],[32.098971,34.771286],[32.098743,34.771371],[32.098514,34.771457],[32.098286,34.771543],[32.098057,34.771629],[32.097829,34.771714],[32.0976,34.7718]],
 
-  function classify(x, name) {
-    const t = x.type, mod = x.modifier || '';
-    if (t === 'roundabout' || t === 'rotary') {
-      return { kind: 'roundabout', exit: x.exit || null, name, text: roundaboutText(x.exit, name) };
-    }
-    if (t === 'exit roundabout' || t === 'exit rotary') return null; // dup of enter
-    const dir = MOD_TURN[mod];
-    if (!dir) return null; // straight / continue / uturn — not a turn cue
-    // skip trivial slight deviations on the same road (keeps the list clean)
-    if ((mod === 'slight left' || mod === 'slight right') && (t === 'continue' || t === 'new name')) return null;
-    return { kind: dir, exit: null, name, text: turnText(t, dir, name) };
-  }
+  // legacy SVG path (kept for any non-map fallback)
+  shape: '',
 
-  const EXIT_HE = ['', 'הראשונה', 'השנייה', 'השלישית', 'הרביעית', 'החמישית', 'השישית'];
-  function roundaboutText(exit, name) {
-    const ord = EXIT_HE[exit] || ('ה־' + exit);
-    return exit ? `בכיכר — צאו ביציאה ${ord}` + (name ? ` אל ${name}` : '')
-      : 'בכיכר' + (name ? ` — המשיכו אל ${name}` : '');
-  }
-  function turnText(type, dir, name) {
-    const d = dir === 'right' ? 'ימינה' : 'שמאלה';
-    const lead = type === 'end of road' ? 'בסוף הדרך פנו ' : type === 'fork' ? 'הישארו ' : 'פנו ';
-    const dd = type === 'fork' ? (dir === 'right' ? 'מימין' : 'משמאל') : d;
-    return lead + dd + (name ? ` אל ${name}` : '');
-  }
+  // MOCK turn-by-turn hints — what an OSRM/Valhalla map-matching pass would return.
+  // Each: f = fraction along the route where the maneuver happens.
+  // kind: 'roundabout' (with exit number) | 'right' | 'left'. Demo only.
+  maneuvers: [
+    { f: 0.345, kind: 'roundabout', exit: 2, street: 'שד׳ אבן גבירול' },
+  ],
 
-  async function maneuvers(geom, opts) {
-    opts = opts || {};
-    const server = (opts.server || DEFAULT_SERVER).replace(/\/+$/, '');
-    const metrics = window.Geo.polylineMetrics(geom || []);
-    if (metrics.pts.length < 2) return { ok: false, reason: 'no-geom' };
-
-    // sample the shape down to a dense-but-bounded set of waypoints
-    const N = Math.min(95, metrics.pts.length);
-    const stepN = (metrics.pts.length - 1) / (N - 1);
-    const wp = [];
-    for (let i = 0; i < N; i++) {
-      const p = metrics.pts[Math.round(i * stepN)];
-      wp.push(p[1].toFixed(6) + ',' + p[0].toFixed(6));
-    }
-    const url = `${server}/route/v1/driving/${wp.join(';')}?steps=true&overview=false`;
-
-    let j;
-    try {
-      const r = await fetch(url);
-      j = await r.json();
-    } catch (e) { return { ok: false, reason: 'network', detail: String(e.message || e) }; }
-    if (!j || j.code !== 'Ok' || !j.routes || !j.routes[0]) return { ok: false, reason: (j && j.code) || 'no-route' };
-
-    const dist = j.routes[0].distance;
-    // wander guard: if OSRM's path is far longer than the shape, the input wasn't
-    // road-aligned (e.g. a synthetic demo line) — don't trust the maneuvers.
-    if (dist > metrics.total * 1.45 + 500) return { ok: false, reason: 'wander', dist, shape: metrics.total };
-
-    const out = [];
-    for (const leg of j.routes[0].legs) {
-      for (const st of leg.steps) {
-        const m = classify(st.maneuver, st.name || '');
-        if (!m) continue;
-        const loc = st.maneuver.location; // [lon, lat]
-        m.f = metrics.locate(loc[1], loc[0]);
-        out.push(m);
-      }
-    }
-    out.sort((a, b) => a.f - b.f);
-    return { ok: true, dist, shape: metrics.total, maneuvers: out };
-  }
-
-  window.OSRM = { maneuvers, DEFAULT_SERVER };
-})();
+  trip: {
+    routeId: 'r5', tripId: 't5_0815', headsign: 'נמל תל אביב', direction: 'הלוך', makat: '23045',
+    serviceDays: 'א׳–ה׳', departure: '08:15',
+    stops: [{"id":"s1","seq":1,"name":"ת. רכבת ההגנה","code":"21507","time":"08:15","lat":32.0558,"lon":34.7935,"f":0},{"id":"s2","seq":2,"name":"דרך השלום/יגאל אלון","code":"21344","time":"08:19","lat":32.0639,"lon":34.7918,"f":0.1588},{"id":"s3","seq":3,"name":"יגאל אלון/החשמונאים","code":"21092","time":"08:23","lat":32.0712,"lon":34.7861,"f":0.3278},{"id":"s4","seq":4,"name":"אבן גבירול/שאול המלך","code":"20418","time":"08:28","lat":32.0808,"lon":34.7818,"f":0.5261},{"id":"s5","seq":5,"name":"כיכר רבין","code":"20377","time":"08:32","lat":32.0851,"lon":34.781,"f":0.6101},{"id":"s6","seq":6,"name":"אבן גבירול/נורדאו","code":"20631","time":"08:37","lat":32.0902,"lon":34.7802,"f":0.7095},{"id":"s7","seq":7,"name":"אבן גבירול/ירמיהו","code":"20644","time":"08:41","lat":32.0958,"lon":34.7793,"f":0.8186},{"id":"s8","seq":8,"name":"ארלוזורוב/דיזנגוף","code":"20218","time":"08:45","lat":32.0982,"lon":34.7748,"f":0.9056},{"id":"s9","seq":9,"name":"נמל תל אביב/הטיילת","code":"20890","time":"08:50","lat":32.0992,"lon":34.7712,"f":0.9676},{"id":"s10","seq":10,"name":"נמל תל אביב (מסוף)","code":"20891","time":"08:54","lat":32.0976,"lon":34.7718,"f":1}],
+  },
+};
