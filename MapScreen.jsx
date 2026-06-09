@@ -1,7 +1,9 @@
 // Central driving screen — real map (Leaflet) with the route, stops and a live driver puck.
 const { useState: useStateMS, useEffect: useEffectMS, useRef: useRefMS, useMemo: useMemoMS } = React;
 
-function TripHeader({ route, trip, dark, onToggleDark, onBack }) {
+function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
+  const statusColor = osrmStatus === 'ok' ? 'var(--ok)' : osrmStatus === 'loading' ? 'var(--warn)' : 'var(--text-dim)';
+  const statusLabel = osrmStatus === 'ok' ? 'ניווט חי' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'ניווט גיאומטרי' : '';
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 11, padding: '10px 14px',
@@ -15,11 +17,12 @@ function TripHeader({ route, trip, dark, onToggleDark, onBack }) {
         <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
           <span style={{ fontWeight: 800, fontSize: 16.5, color: 'var(--text)', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{trip.headsign}</span>
         </div>
-        <div style={{ fontSize: 12.5, color: 'var(--text-mut)', display: 'flex', gap: 8, marginTop: 1 }}>
+        <div style={{ fontSize: 12.5, color: 'var(--text-mut)', display: 'flex', gap: 8, marginTop: 1, alignItems: 'center' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
             <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />בנסיעה
           </span>
           <span>· יציאה {trip.departure}</span>
+          {statusLabel ? <span style={{ color: statusColor, fontWeight: 700 }}>· {statusLabel}</span> : null}
         </div>
       </div>
       <DayNightToggle dark={dark} onToggle={onToggleDark} />
@@ -29,13 +32,12 @@ function TripHeader({ route, trip, dark, onToggleDark, onBack }) {
 
 const EXIT_HE = ['', 'הראשונה', 'השנייה', 'השלישית', 'הרביעית', 'החמישית'];
 
-// Turn-by-turn maneuver cue (roundabout / sharp turn) — mirrors what an OSRM
-// map-matching pass would produce. Louder styling than the stop cue.
 function ManeuverBanner({ mv }) {
   const Ico = mv.kind === 'roundabout' ? IconRoundabout : mv.kind === 'right' ? IconTurnRight : IconTurnLeft;
   const m = Math.max(0, mv.meters);
   const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
-  const title = mv.kind === 'roundabout' ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
+  const title = mv.kind === 'roundabout'
+    ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
     : mv.kind === 'right' ? 'פנו ימינה' : 'פנו שמאלה';
   return (
     <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto' }}>
@@ -49,21 +51,41 @@ function ManeuverBanner({ mv }) {
           {mv.street && <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.92, marginTop: 1 }}>אל {mv.street}</div>}
         </div>
       </div>
-      <div style={{ marginTop: 9, fontSize: 11, fontWeight: 700, opacity: 0.75, display: 'flex', alignItems: 'center', gap: 6 }}>
-        <span style={{ width: 6, height: 6, borderRadius: 99, background: '#fff', opacity: 0.7 }} />
-        הדמיה · ידרוש מנוע ניתוב (OSRM) בחיבור אמיתי
-      </div>
     </div>
   );
 }
 
-function MapScreen({ route, trip, geom, maneuvers = [], dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
+function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
   const [focus, setFocus] = useStateMS(null);
   const [sheetOpen, setSheetOpen] = useStateMS(false);
+
+  // OSRM live navigation state
+  const [osrmStatus, setOsrmStatus] = useStateMS('idle'); // idle | loading | ok | fallback
+  const [osrmManeuvers, setOsrmManeuvers] = useStateMS([]);
+
   const stops = trip.stops;
   const metrics = useMemoMS(() => window.Geo.polylineMetrics(geom || []), [geom]);
 
+  // Fetch OSRM maneuvers whenever the route geometry changes
+  useEffectMS(() => {
+    if (!geom || geom.length < 2 || !window.OSRM) return;
+    let cancelled = false;
+    setOsrmStatus('loading');
+    setOsrmManeuvers([]);
+    window.OSRM.maneuvers(geom).then((res) => {
+      if (cancelled) return;
+      if (res.ok) {
+        setOsrmManeuvers(res.maneuvers);
+        setOsrmStatus('ok');
+      } else {
+        setOsrmStatus('fallback');
+      }
+    }).catch(() => { if (!cancelled) setOsrmStatus('fallback'); });
+    return () => { cancelled = true; };
+  }, [geom]);
+
+  // Animate the driver puck along the route
   useEffectMS(() => {
     if (!animate) return;
     let raf, last;
@@ -81,32 +103,31 @@ function MapScreen({ route, trip, geom, maneuvers = [], dark, onToggleDark, onBa
 
   const focusStop = (s) => { setFocus(s.id); setTimeout(() => setFocus((cur) => cur === s.id ? null : cur), 4000); };
   const nextStop = stops.find((s) => s.f > driverF) || stops[stops.length - 1];
-
-  // Real remaining distance (m) along the route to the next stop
   const metersToNext = nextStop ? Math.max(0, (nextStop.f - driverF) * metrics.total) : 0;
 
-  // Look ahead from current position for the next significant turn (up to 450 m).
-  // This is more accurate than checking only at the next stop's position.
-  const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
-  const maneuver = upcomingTurn.type;
-  // Show the distance to the turn itself, not the distance to the stop
-  const metersToTurn = upcomingTurn.meters;
+  // Determine active maneuver source: real OSRM if available, else prop (demo), else geometry
+  const activeManeuvers = osrmStatus === 'ok' ? osrmManeuvers : maneuversProp;
 
-  // Explicit maneuver from OSRM/demo (roundabout etc.) — takes over the banner when close
-  const upcomingMv = maneuvers
+  // Find the next upcoming explicit maneuver (roundabout / sharp turn) within 350 m
+  const upcomingMv = activeManeuvers
     .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
-    .filter((mv) => mv.meters > -20 && mv.meters < 320)
+    .filter((mv) => mv.meters > -20 && mv.meters < 350)
     .sort((a, b) => a.meters - b.meters)[0] || null;
+
+  // Fallback: geometry-based look-ahead for turns (used when no OSRM maneuver is near)
+  const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
+  const maneuver = upcomingMv ? upcomingMv.kind : upcomingTurn.type;
+  const metersToTurn = upcomingMv ? Math.max(0, upcomingMv.meters) : upcomingTurn.meters;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} />
+      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} />
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <LeafletMap geom={geom} stops={stops} driverF={driverF} focusStopId={focus} dark={dark} follow compact toggleBottom={sheetOpen ? '62%' : 164} />
 
         {/* floating navigation cue */}
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
-          {upcomingMv
+          {upcomingMv && (upcomingMv.kind === 'roundabout' || upcomingMv.meters < 300)
             ? <ManeuverBanner mv={upcomingMv} />
             : <NextStopBanner
                 stop={nextStop}
