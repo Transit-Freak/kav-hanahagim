@@ -74,11 +74,30 @@
       const b1 = bearingAt(Math.max(0, frac - win));
       const b2 = bearingAt(Math.min(1, frac + win));
       let d = ((b2 - b1 + 540) % 360) - 180; // -180..180, +right
-      if (Math.abs(d) < 25) return 'straight';
+      if (Math.abs(d) < 28) return 'straight';
       return d > 0 ? 'right' : 'left';
     }
 
-    return { pts, cum, total, locate, pointAt, bearingAt, maneuverAt };
+    // Scan forward from fromF up to maxMeters to find the next significant turn.
+    // Returns { type: 'left'|'right'|'straight', f, meters }.
+    // Skips a small dead-zone right at fromF to avoid re-detecting the current position.
+    function nextTurn(fromF, maxMeters) {
+      if (maxMeters === undefined) maxMeters = 450;
+      if (pts.length < 3) return { type: 'straight', f: fromF, meters: 0 };
+      // step every ~18 m; coarser on very long routes to stay fast
+      const step = Math.max(0.003, 18 / total);
+      const deadZone = Math.max(step * 2, 30 / total); // skip 30 m behind current pos
+      const limit = Math.min(1, fromF + maxMeters / total);
+      for (let f = fromF + deadZone; f < limit; f += step) {
+        const t = maneuverAt(f);
+        if (t !== 'straight') {
+          return { type: t, f, meters: (f - fromF) * total };
+        }
+      }
+      return { type: 'straight', f: limit, meters: (limit - fromF) * total };
+    }
+
+    return { pts, cum, total, locate, pointAt, bearingAt, maneuverAt, nextTurn };
   }
 
   window.Geo = { metersBetween, polylineMetrics };
