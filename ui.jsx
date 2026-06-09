@@ -87,11 +87,17 @@ function ManeuverBadge({ dir, size = 52 }) {
 
 const TURN_LABEL = { right: 'פנו ימינה', left: 'פנו שמאלה', straight: 'המשיכו ישר' };
 
-// Driver navigation cue: turn direction + meters to next stop + stop name
-function NextStopBanner({ stop, driverF, meters, dark, compact, maneuver = 'straight' }) {
+// Driver navigation cue: turn direction + meters to next turn + stop name
+function NextStopBanner({ stop, driverF, meters, metersToTurn, dark, compact, maneuver = 'straight' }) {
   if (!stop) return null;
-  const m = meters != null ? meters : distToStop(stop.f, driverF);
-  const close = m <= 60;
+  const mStop = meters != null ? meters : distToStop(stop.f, driverF);
+  // If we have a specific distance to the turn, show that in the main cue;
+  // otherwise fall back to distance-to-stop. When very close to a stop, always show stop distance.
+  const closeToStop = mStop <= 60;
+  const showTurn = !closeToStop && maneuver !== 'straight' && metersToTurn != null && metersToTurn < mStop;
+  const mainDist = showTurn ? metersToTurn : mStop;
+  const mainLabel = closeToStop ? 'מגיעים לתחנה' : TURN_LABEL[maneuver];
+
   return (
     <div style={{
       background: 'var(--accent)', color: '#fff', borderRadius: compact ? 18 : 22,
@@ -99,13 +105,13 @@ function NextStopBanner({ stop, driverF, meters, dark, compact, maneuver = 'stra
       boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-        <ManeuverBadge dir={close ? 'straight' : maneuver} size={compact ? 50 : 58} />
+        <ManeuverBadge dir={closeToStop ? 'straight' : maneuver} size={compact ? 50 : 58} />
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.9 }}>
-            {close ? 'מגיעים לתחנה' : TURN_LABEL[maneuver]}
+            {mainLabel}
           </div>
           <div style={{ fontSize: compact ? 30 : 36, fontWeight: 800, lineHeight: 1.05, unicodeBidi: 'isolate' }}>
-            בעוד {fmtDist(m)}
+            בעוד {fmtDist(mainDist)}
           </div>
         </div>
       </div>
@@ -113,7 +119,7 @@ function NextStopBanner({ stop, driverF, meters, dark, compact, maneuver = 'stra
       <div style={{ display: 'flex', alignItems: 'center', gap: 9 }}>
         <IconPin size={18} sw={2.2} style={{ opacity: 0.9, flexShrink: 0 }} />
         <div style={{ minWidth: 0, flex: 1 }}>
-          <div style={{ fontSize: 11.5, fontWeight: 700, opacity: 0.8, letterSpacing: '0.02em' }}>התחנה הבאה</div>
+          <div style={{ fontSize: 11.5, fontWeight: 700, opacity: 0.8, letterSpacing: '0.02em' }}>התחנה הבאה · {fmtDist(mStop)}</div>
           <div style={{ fontSize: compact ? 19 : 22, fontWeight: 800, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{stop.name}</div>
         </div>
         <div style={{ textAlign: 'center', flexShrink: 0, opacity: 0.92 }}>
