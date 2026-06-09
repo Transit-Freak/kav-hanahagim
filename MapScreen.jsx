@@ -82,12 +82,17 @@ function MapScreen({ route, trip, geom, maneuvers = [], dark, onToggleDark, onBa
   const focusStop = (s) => { setFocus(s.id); setTimeout(() => setFocus((cur) => cur === s.id ? null : cur), 4000); };
   const nextStop = stops.find((s) => s.f > driverF) || stops[stops.length - 1];
 
-  // real remaining distance (m) along the route to the next stop, and the turn there
+  // Real remaining distance (m) along the route to the next stop
   const metersToNext = nextStop ? Math.max(0, (nextStop.f - driverF) * metrics.total) : 0;
-  const maneuver = nextStop ? metrics.maneuverAt(nextStop.f) : 'straight';
 
-  // upcoming explicit maneuver (e.g. roundabout) — what an OSRM map-matching pass
-  // would surface. Show it when within ~320 m ahead; takes over the cue banner.
+  // Look ahead from current position for the next significant turn (up to 450 m).
+  // This is more accurate than checking only at the next stop's position.
+  const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
+  const maneuver = upcomingTurn.type;
+  // Show the distance to the turn itself, not the distance to the stop
+  const metersToTurn = upcomingTurn.meters;
+
+  // Explicit maneuver from OSRM/demo (roundabout etc.) — takes over the banner when close
   const upcomingMv = maneuvers
     .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
     .filter((mv) => mv.meters > -20 && mv.meters < 320)
@@ -103,7 +108,14 @@ function MapScreen({ route, trip, geom, maneuvers = [], dark, onToggleDark, onBa
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
           {upcomingMv
             ? <ManeuverBanner mv={upcomingMv} />
-            : <NextStopBanner stop={nextStop} meters={metersToNext} dark={dark} maneuver={maneuver} compact />}
+            : <NextStopBanner
+                stop={nextStop}
+                meters={metersToNext}
+                dark={dark}
+                maneuver={maneuver}
+                metersToTurn={metersToTurn}
+                compact
+              />}
         </div>
 
         {/* bottom sheet with the stop list */}
