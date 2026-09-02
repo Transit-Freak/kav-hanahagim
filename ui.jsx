@@ -74,7 +74,8 @@ function etaMin(m) { return Math.max(1, Math.round(m / 300)); }
 
 // Maneuver badge (turn arrow)
 function ManeuverBadge({ dir, size = 52 }) {
-  const Arrow = dir === 'right' ? IconTurnRight : dir === 'left' ? IconTurnLeft : IconStraight;
+  // right / left / keep-right / keep-left → חץ לצד; כל השאר ישר
+  const Arrow = /right$/.test(dir) ? IconTurnRight : /left$/.test(dir) ? IconTurnLeft : IconStraight;
   return (
     <div style={{
       width: size, height: size, borderRadius: 16, background: 'rgba(255,255,255,0.18)',
@@ -85,7 +86,7 @@ function ManeuverBadge({ dir, size = 52 }) {
   );
 }
 
-const TURN_LABEL = { right: 'פנו ימינה', left: 'פנו שמאלה', straight: 'המשיכו ישר' };
+const TURN_LABEL = { right: 'פנו ימינה', left: 'פנו שמאלה', 'keep-right': 'היצמדו לימין', 'keep-left': 'היצמדו לשמאל', roundabout: 'בכיכר', straight: 'המשיכו ישר' };
 
 // Driver navigation cue: turn direction + meters to next turn + stop name
 function NextStopBanner({ stop, driverF, meters, metersToTurn, dark, compact, maneuver = 'straight' }) {

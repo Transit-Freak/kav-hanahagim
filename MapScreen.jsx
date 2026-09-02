@@ -33,12 +33,16 @@ function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
 const EXIT_HE = ['', 'הראשונה', 'השנייה', 'השלישית', 'הרביעית', 'החמישית'];
 
 function ManeuverBanner({ mv }) {
-  const Ico = mv.kind === 'roundabout' ? IconRoundabout : mv.kind === 'right' ? IconTurnRight : IconTurnLeft;
+  // kind: right | left | keep-right | keep-left | roundabout. "היצמדו לימין" (התפצלות, רמפה)
+  // אינו "פנו ימינה" — שלמה, מחלף עד הלום 02.09. הכותרת מהטקסט המוכן כשיש.
+  const side = mv.kind.endsWith('right') ? 'right' : 'left';
+  const Ico = mv.kind === 'roundabout' ? IconRoundabout : side === 'right' ? IconTurnRight : IconTurnLeft;
   const m = Math.max(0, mv.meters);
   const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
   const title = mv.kind === 'roundabout'
     ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
-    : mv.kind === 'right' ? 'פנו ימינה' : 'פנו שמאלה';
+    : mv.kind.startsWith('keep') ? (side === 'right' ? 'היצמדו לימין' : 'היצמדו לשמאל')
+    : side === 'right' ? 'פנו ימינה' : 'פנו שמאלה';
   return (
     <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
