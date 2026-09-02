@@ -39,10 +39,12 @@ function ManeuverBanner({ mv }) {
   const Ico = mv.kind === 'roundabout' ? IconRoundabout : side === 'right' ? IconTurnRight : IconTurnLeft;
   const m = Math.max(0, mv.meters);
   const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
+  const titleOf = (k) => k.startsWith('keep') ? (k.endsWith('right') ? 'היצמדו לימין' : 'היצמדו לשמאל') : (k.endsWith('right') ? 'פנו ימינה' : 'פנו שמאלה');
   const title = mv.kind === 'roundabout'
     ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
-    : mv.kind.startsWith('keep') ? (side === 'right' ? 'היצמדו לימין' : 'היצמדו לשמאל')
-    : side === 'right' ? 'פנו ימינה' : 'פנו שמאלה';
+    // הוראה מורכבת: שתי הוראות באותה נקודה (מחלף) — "היצמדו לשמאל, ואז לימין"
+    : mv.then ? `${titleOf(mv.kind)}, ואז ${titleOf(mv.then).replace(/^(היצמדו|פנו) /, '')}`
+    : titleOf(mv.kind);
   return (
     <div style={{ background: 'var(--accent)', color: '#fff', borderRadius: 18, padding: '14px 16px', boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
@@ -123,10 +125,17 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   // ההוראה הבאה: הראשונה לפי סדר המסלול שעוד לא עברנו (עד 350 מ׳ קדימה). בחירה לפי
   // "הקרובה במטרים" קפצה בין שתי הוראות סמוכות (מחלף עד הלום, קו 17): ימינה/שמאלה
   // לסירוגין כל שנייה. סדר המסלול יציב — ההוראה מתחלפת רק כשעוברים אותה.
-  const upcomingMv = activeManeuvers
+  const aheadMvs = activeManeuvers
     .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
     .filter((mv) => mv.meters > -20 && mv.meters < 350)
-    .sort((a, b) => a.f - b.f)[0] || null;
+    .sort((a, b) => a.f - b.f);
+  // שתי הוראות שונות באותה נקודה (מחלף: היצמדו לשמאל ואז לימין) — באנר אחד, "ואז".
+  // הנתונים המוכנים כבר ממזגים כאלה (then); כאן גם למקרה שהן הגיעו נפרדות.
+  const upcomingMv = aheadMvs.length
+    ? (aheadMvs[1] && aheadMvs[1].meters - aheadMvs[0].meters < 25 && aheadMvs[1].kind !== 'roundabout' && !aheadMvs[0].then
+      ? { ...aheadMvs[0], then: aheadMvs[1].kind }
+      : aheadMvs[0])
+    : null;
 
   // Fallback: geometry-based look-ahead for turns (used when no OSRM maneuver is near)
   const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
