@@ -116,11 +116,13 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     ? ((osrmStatus === 'ok' || osrmStatus === 'weak') ? maneuversProp : [])
     : (osrmStatus === 'ok' ? osrmManeuvers : maneuversProp);
 
-  // Find the next upcoming explicit maneuver (roundabout / sharp turn) within 350 m
+  // ההוראה הבאה: הראשונה לפי סדר המסלול שעוד לא עברנו (עד 350 מ׳ קדימה). בחירה לפי
+  // "הקרובה במטרים" קפצה בין שתי הוראות סמוכות (מחלף עד הלום, קו 17): ימינה/שמאלה
+  // לסירוגין כל שנייה. סדר המסלול יציב — ההוראה מתחלפת רק כשעוברים אותה.
   const upcomingMv = activeManeuvers
     .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
     .filter((mv) => mv.meters > -20 && mv.meters < 350)
-    .sort((a, b) => a.meters - b.meters)[0] || null;
+    .sort((a, b) => a.f - b.f)[0] || null;
 
   // Fallback: geometry-based look-ahead for turns (used when no OSRM maneuver is near)
   const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
@@ -135,7 +137,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
         {/* floating navigation cue */}
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
-          {upcomingMv && (upcomingMv.kind === 'roundabout' || upcomingMv.meters < 300)
+          {upcomingMv
             ? <ManeuverBanner mv={upcomingMv} />
             : <NextStopBanner
                 stop={nextStop}
