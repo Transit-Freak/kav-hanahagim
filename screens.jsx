@@ -159,7 +159,7 @@ function UploadScreen({ dark, onToggleDark, onLoaded, onDemo }) {
 }
 
 // ── Search screen ─────────────────────────────────────────────
-function SearchScreen({ dark, onToggleDark, onSelect, feed }) {
+function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload }) {
   const [mode, setMode] = useStateSC('line'); // 'line' | 'makat'
   const [q, setQ] = useStateSC('');
   const allRoutes = feed ? feed.routes : window.GTFS_FEED.routes;
@@ -191,7 +191,13 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed }) {
           <Brandmark small />
           <DayNightToggle dark={dark} onToggle={onToggleDark} />
         </div>
-        <div style={{ fontSize: 23, fontWeight: 800, color: 'var(--text)', marginBottom: 12 }}>איזה קו אתה נוסע?</div>
+        <div style={{ fontSize: 23, fontWeight: 800, color: 'var(--text)', marginBottom: feed && feed.remote ? 4 : 12 }}>איזה קו אתה נוסע?</div>
+        {feed && feed.remote && (
+          <div style={{ fontSize: 12.5, color: 'var(--text-mut)', marginBottom: 10, display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
+            <span>{feed.fileName} · עודכן {feed.built}</span>
+            {onUpload && <button onClick={onUpload} style={{ background: 'none', border: 'none', padding: 0, fontFamily: 'inherit', fontSize: 12.5, fontWeight: 700, color: 'var(--accent)', cursor: 'pointer' }}>קובץ GTFS אחר</button>}
+          </div>
+        )}
         <Segmented value={mode} onChange={(v) => { setMode(v); setQ(''); }}
           options={[{ value: 'line', label: 'מספר קו' }, { value: 'makat', label: 'מק״ט' }]} />
 
@@ -212,7 +218,7 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed }) {
       {/* results */}
       <div style={{ flex: 1, overflow: 'auto', padding: '12px 12px 4px' }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-mut)', padding: '0 6px 6px' }}>
-          {q ? `${total.toLocaleString('he-IL')} תוצאות${total > filtered.length ? ` · מוצגות ${filtered.length}` : ''}` : (feed ? 'כל הקווים' : 'קווים אחרונים')}
+          {q ? `${total.toLocaleString('he-IL')} תוצאות${total > filtered.length ? ` · מוצגות ${filtered.length}` : ''}` : (feed ? (feed.remote ? `כל ${total.toLocaleString('he-IL')} הקווים בישראל` : 'כל הקווים') : 'קווים אחרונים')}
         </div>
         {filtered.map((r) => (
           <button key={r.id} onClick={() => onSelect(r)} style={{

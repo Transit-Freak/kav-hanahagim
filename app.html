@@ -96,6 +96,7 @@
   <script src="gtfs.js"></script>
   <script src="geo.js"></script>
   <script src="osrm.js"></script>
+  <script src="data.js"></script>
   <script type="text/babel" src="icons.jsx"></script>
   <script type="text/babel" src="LeafletMap.jsx"></script>
   <script type="text/babel" src="ui.jsx"></script>
@@ -121,18 +122,42 @@
       );
     }
 
+    // מסך ביניים: טוען את רשימת הקווים המוכנה / את הקו שנבחר
+    function Waiting({ title, detail, err, onBack }) {
+      return (
+        <div style={{ height: '100%', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 14, padding: 24, textAlign: 'center' }}>
+          {!err && <div className="spin" style={{ width: 44, height: 44, borderRadius: 99, border: '3px solid var(--chip)', borderTopColor: 'var(--accent)' }} />}
+          <div style={{ fontWeight: 800, fontSize: 17, color: err ? 'var(--warn)' : 'var(--text)' }}>{err ? 'לא הצלחתי לטעון' : title}</div>
+          <div style={{ fontSize: 13.5, color: 'var(--text-mut)', lineHeight: 1.5, direction: err ? 'ltr' : 'rtl' }}>{err || detail}</div>
+          {onBack && <button onClick={onBack} style={{ marginTop: 6, background: 'var(--chip)', border: 'none', borderRadius: 12, padding: '10px 18px', fontFamily: 'inherit', fontWeight: 700, fontSize: 14.5, color: 'var(--text)', cursor: 'pointer' }}>חזרה לחיפוש</button>}
+        </div>
+      );
+    }
+
     function App() {
       const [dark, setDark] = useState(false);
       const initial = (location.hash || '').replace('#', '');
-      const [screen, setScreen] = useState(['search', 'map'].includes(initial) ? initial : 'upload');
+      // בפתיחה: רשימת הקווים המוכנה מהשרת (data.js). #upload פותח ישר את ההעלאה הידנית.
+      const [screen, setScreen] = useState(initial === 'upload' ? 'upload' : 'boot');
       const [route, setRoute] = useState(null);
       const [feed, setFeed] = useState(null);
       const [view, setView] = useState(null);
+      const [routeErr, setRouteErr] = useState('');
+      const [bootErr, setBootErr] = useState('');
       const toggle = () => setDark((d) => !d);
 
       useEffect(() => {
         document.body.setAttribute('data-theme', dark ? 'dark' : 'light');
       }, [dark]);
+
+      useEffect(() => {
+        if (screen !== 'boot') return;
+        let alive = true;
+        window.NahagimData.loadIndex()
+          .then((f) => { if (alive) { setFeed(f); setScreen('search'); } })
+          .catch((e) => { if (alive) { setBootErr(String(e.message || e)); setScreen('upload'); } });
+        return () => { alive = false; };
+      }, []);
 
       useEffect(() => {
         const onHash = () => {
@@ -145,9 +170,18 @@
 
       const selectRoute = (r) => {
         setRoute(r);
+        setRouteErr('');
+        if (feed && feed.remote) {
+          // הקובץ המוכן של הקו: תחנות, צורה והוראות נהיגה
+          setView(null);
+          setScreen('map');
+          window.NahagimData.loadRoute(r.id)
+            .then((v) => setView(v))
+            .catch((e) => setRouteErr(String(e.message || e)));
+          return;
+        }
         if (feed) {
-          const v = window.GTFSParser.buildTripView(feed, r.id);
-          setView(v);
+          setView(window.GTFSParser.buildTripView(feed, r.id));
         } else {
           setView(null);
         }
@@ -160,14 +194,20 @@
       const mapRoute = route || demo.routes[0];
 
       let body;
-      if (screen === 'upload')
-        body = <UploadScreen dark={dark} onToggleDark={toggle}
+      if (screen === 'boot')
+        body = <Waiting title="טוען את רשימת הקווים" detail="נתוני משרד התחבורה, מעודכנים אחת לשבוע" />;
+      else if (screen === 'upload')
+        body = <UploadScreen dark={dark} onToggleDark={toggle} note={bootErr}
           onLoaded={(f) => { setFeed(f); setScreen('search'); }}
           onDemo={() => { setFeed(null); setView(null); setScreen('search'); }} />;
       else if (screen === 'search')
-        body = <SearchScreen dark={dark} onToggleDark={toggle} feed={feed} onSelect={selectRoute} />;
+        body = <SearchScreen dark={dark} onToggleDark={toggle} feed={feed} onSelect={selectRoute} onUpload={() => setScreen('upload')} />;
+      else if (feed && feed.remote && !view)
+        body = <Waiting title={`טוען את קו ${route ? route.shortName : ''}`} detail="תחנות, מסלול והוראות נהיגה" err={routeErr} onBack={() => setScreen('search')} />;
       else
         body = <MapScreen route={mapRoute} trip={trip} geom={geom} dark={dark} onToggleDark={toggle}
+          maneuvers={view && view.maneuvers ? view.maneuvers : undefined}
+          navSource={view && view.nav ? view.nav.status : undefined}
           onBack={() => setScreen('search')} startF={0.28} />;
 
       return (

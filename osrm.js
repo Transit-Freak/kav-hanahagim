@@ -57,7 +57,9 @@
       const p = metrics.pts[Math.round(i * stepN)];
       wp.push(p[1].toFixed(6) + ',' + p[0].toFixed(6));
     }
-    const url = `${server}/route/v1/driving/${wp.join(';')}?steps=true&overview=false`;
+    // waypoints=0;N-1: כל הנקודות מכוונות את המסלול, אבל רק הראשונה והאחרונה הן "עצירות" —
+    // בלי זה כל נקודת ביניים מייצרת צעדי הגעה/יציאה עם כיוון, שנספרו כאן כפניות.
+    const url = `${server}/route/v1/driving/${wp.join(';')}?steps=true&overview=false&waypoints=0;${wp.length - 1}`;
 
     let j;
     try {

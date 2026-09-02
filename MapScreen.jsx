@@ -2,8 +2,8 @@
 const { useState: useStateMS, useEffect: useEffectMS, useRef: useRefMS, useMemo: useMemoMS } = React;
 
 function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
-  const statusColor = osrmStatus === 'ok' ? 'var(--ok)' : osrmStatus === 'loading' ? 'var(--warn)' : 'var(--text-dim)';
-  const statusLabel = osrmStatus === 'ok' ? 'ניווט חי' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'ניווט גיאומטרי' : '';
+  const statusColor = osrmStatus === 'ok' ? 'var(--ok)' : (osrmStatus === 'loading' || osrmStatus === 'weak') ? 'var(--warn)' : 'var(--text-dim)';
+  const statusLabel = osrmStatus === 'ok' ? 'הוראות נהיגה' : osrmStatus === 'weak' ? 'הוראות חלקיות' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'ניווט גיאומטרי' : '';
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 11, padding: '10px 14px',
@@ -48,27 +48,33 @@ function ManeuverBanner({ mv }) {
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.9 }}>בעוד {dist}</div>
           <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
-          {mv.street && <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.92, marginTop: 1 }}>אל {mv.street}</div>}
+          {(mv.street || mv.name) && <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.92, marginTop: 1 }}>אל {mv.street || mv.name}</div>}
         </div>
       </div>
     </div>
   );
 }
 
-function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
+// navSource: 'ok' | 'weak' | 'none' כשההוראות הגיעו מוכנות מהשרת (data.js) — אז אין קריאה חיה ל-OSRM.
+function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
   const [focus, setFocus] = useStateMS(null);
   const [sheetOpen, setSheetOpen] = useStateMS(false);
 
-  // OSRM live navigation state
-  const [osrmStatus, setOsrmStatus] = useStateMS('idle'); // idle | loading | ok | fallback
+  // navigation state: idle | loading | ok | weak | fallback
+  const [osrmStatus, setOsrmStatus] = useStateMS('idle');
   const [osrmManeuvers, setOsrmManeuvers] = useStateMS([]);
 
   const stops = trip.stops;
   const metrics = useMemoMS(() => window.Geo.polylineMetrics(geom || []), [geom]);
 
-  // Fetch OSRM maneuvers whenever the route geometry changes
+  // הוראות מוכנות מהשרת, או (בקובץ שהועלה ידנית) קריאה חיה ל-OSRM
   useEffectMS(() => {
+    if (navSource) {
+      setOsrmManeuvers([]);
+      setOsrmStatus(maneuversProp.length ? (navSource === 'ok' ? 'ok' : 'weak') : 'fallback');
+      return;
+    }
     if (!geom || geom.length < 2 || !window.OSRM) return;
     let cancelled = false;
     setOsrmStatus('loading');
@@ -83,7 +89,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], dark, onT
       }
     }).catch(() => { if (!cancelled) setOsrmStatus('fallback'); });
     return () => { cancelled = true; };
-  }, [geom]);
+  }, [geom, navSource]);
 
   // Animate the driver puck along the route
   useEffectMS(() => {
@@ -106,7 +112,9 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], dark, onT
   const metersToNext = nextStop ? Math.max(0, (nextStop.f - driverF) * metrics.total) : 0;
 
   // Determine active maneuver source: real OSRM if available, else prop (demo), else geometry
-  const activeManeuvers = osrmStatus === 'ok' ? osrmManeuvers : maneuversProp;
+  const activeManeuvers = navSource
+    ? ((osrmStatus === 'ok' || osrmStatus === 'weak') ? maneuversProp : [])
+    : (osrmStatus === 'ok' ? osrmManeuvers : maneuversProp);
 
   // Find the next upcoming explicit maneuver (roundabout / sharp turn) within 350 m
   const upcomingMv = activeManeuvers
