@@ -41,7 +41,7 @@ function ManeuverBanner({ mv }) {
   const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
   const titleOf = (k) => k.startsWith('keep') ? (k.endsWith('right') ? 'היצמדו לימין' : 'היצמדו לשמאל') : (k.endsWith('right') ? 'פנו ימינה' : 'פנו שמאלה');
   const title = mv.kind === 'roundabout'
-    ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר`
+    ? (mv.exit ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר` : 'המשיכו בכיכר · מספר היציאה אינו זמין')
     // הוראה מורכבת: שתי הוראות באותה נקודה (מחלף) — "היצמדו לשמאל, ואז לימין"
     : mv.then ? `${titleOf(mv.kind)}, ואז ${titleOf(mv.then).replace(/^(היצמדו|פנו) /, '')}`
     : titleOf(mv.kind);
@@ -128,33 +128,10 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     ? ((osrmStatus === 'ok' || osrmStatus === 'weak') ? maneuversProp : [])
     : (osrmStatus === 'ok' ? osrmManeuvers : maneuversProp);
 
-  // Group close instructions before filtering by driver position, so a compound
-  // instruction does not change halfway through passing the junction.
-  const groupedManeuvers = useMemoMS(() => {
-    const ordered = activeManeuvers
-      .filter((mv) => Number.isFinite(mv.f) && mv.f >= 0 && mv.f <= 1)
-      .slice().sort((a, b) => a.f - b.f);
-    const grouped = [];
-    for (let i = 0; i < ordered.length; i++) {
-      const first = ordered[i];
-      const next = ordered[i + 1];
-      if (next && !first.then && first.kind !== 'roundabout' &&
-          next.kind !== 'roundabout' && !next.then &&
-          (next.f - first.f) * metrics.total < 25) {
-        grouped.push({ ...first, then: next.kind !== first.kind ? next.kind : undefined, endF: next.f });
-        i++;
-      } else {
-        grouped.push({ ...first, endF: first.f });
-      }
-    }
-    return grouped;
-  }, [activeManeuvers, metrics.total]);
-
-  const nextMv = groupedManeuvers.find((mv) =>
-    (mv.endF - driverF) * metrics.total > -20);
-  const upcomingMv = nextMv && (nextMv.f - driverF) * metrics.total < 350
-    ? { ...nextMv, meters: Math.max(0, (nextMv.f - driverF) * metrics.total) }
-    : null;
+  const groupedManeuvers = useMemoMS(
+    () => window.RouteNavigation.prepare(activeManeuvers, metrics.total),
+    [activeManeuvers, metrics.total]);
+  const upcomingMv = window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
   // A bend in a GTFS shape is not a turn instruction. Between known maneuvers,
   // or when navigation is unavailable, show the next stop without guessing.
@@ -177,7 +154,11 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
         {/* floating navigation cue */}
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
           {upcomingMv
-            ? <ManeuverBanner mv={upcomingMv} />
+            ? <div><ManeuverBanner mv={upcomingMv} />
+                {nextStop && <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
+                  התחנה הבאה: {nextStop.name} · {fmtDist(metersToNext)}
+                </div>}
+              </div>
             : <NextStopBanner
                 stop={nextStop}
                 meters={metersToNext}

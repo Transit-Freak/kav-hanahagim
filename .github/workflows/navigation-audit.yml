@@ -1,0 +1,39 @@
+name: Navigation audit
+on:
+  push:
+    paths:
+      - 'navigation.js'
+      - 'MapScreen.jsx'
+      - 'tools/audit-navigation.cjs'
+      - 'tests/**'
+      - '.github/workflows/navigation-audit.yml'
+  workflow_dispatch:
+  schedule:
+    - cron: '30 12 * * *'
+permissions:
+  contents: read
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Regression tests
+        run: node --test tests/navigation.test.cjs
+      - uses: actions/checkout@v4
+        with:
+          repository: Transit-Freak/kav-bochan
+          ref: nahagim-data
+          path: feed
+          persist-credentials: false
+      - name: Check every indexed route and replay navigation
+        run: node tools/audit-navigation.cjs feed navigation-audit.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: navigation-audit
+          path: navigation-audit.json
+          retention-days: 30
