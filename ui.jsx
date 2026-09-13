@@ -95,9 +95,9 @@ function NextStopBanner({ stop, driverF, meters, metersToTurn, dark, compact, ma
   // If we have a specific distance to the turn, show that in the main cue;
   // otherwise fall back to distance-to-stop. When very close to a stop, always show stop distance.
   const closeToStop = mStop <= 60;
-  const showTurn = !closeToStop && maneuver !== 'straight' && metersToTurn != null && metersToTurn < mStop;
+  const showTurn = !closeToStop && maneuver !== 'none' && maneuver !== 'straight' && metersToTurn != null && metersToTurn < mStop;
   const mainDist = showTurn ? metersToTurn : mStop;
-  const mainLabel = closeToStop ? 'מגיעים לתחנה' : TURN_LABEL[maneuver];
+  const mainLabel = closeToStop ? 'מגיעים לתחנה' : maneuver === 'none' ? 'התחנה הבאה' : TURN_LABEL[maneuver];
 
   return (
     <div style={{
@@ -106,7 +106,7 @@ function NextStopBanner({ stop, driverF, meters, metersToTurn, dark, compact, ma
       boxShadow: '0 8px 24px var(--accent-shadow)', pointerEvents: 'auto',
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 13 }}>
-        <ManeuverBadge dir={closeToStop ? 'straight' : maneuver} size={compact ? 50 : 58} />
+        {maneuver === 'none' ? <IconPin size={compact ? 32 : 36} /> : <ManeuverBadge dir={closeToStop ? 'straight' : maneuver} size={compact ? 50 : 58} />}
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.9 }}>
             {mainLabel}

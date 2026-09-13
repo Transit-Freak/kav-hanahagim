@@ -3,7 +3,7 @@ const { useState: useStateMS, useEffect: useEffectMS, useRef: useRefMS, useMemo:
 
 function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
   const statusColor = osrmStatus === 'ok' ? 'var(--ok)' : (osrmStatus === 'loading' || osrmStatus === 'weak') ? 'var(--warn)' : 'var(--text-dim)';
-  const statusLabel = osrmStatus === 'ok' ? 'הוראות נהיגה' : osrmStatus === 'weak' ? 'הוראות חלקיות' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'ניווט גיאומטרי' : '';
+  const statusLabel = osrmStatus === 'ok' ? 'הוראות נהיגה' : osrmStatus === 'weak' ? 'הוראות חלקיות' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'אין הוראות פנייה' : '';
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: 11, padding: '10px 14px',
@@ -122,25 +122,38 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     ? ((osrmStatus === 'ok' || osrmStatus === 'weak') ? maneuversProp : [])
     : (osrmStatus === 'ok' ? osrmManeuvers : maneuversProp);
 
-  // ההוראה הבאה: הראשונה לפי סדר המסלול שעוד לא עברנו (עד 350 מ׳ קדימה). בחירה לפי
-  // "הקרובה במטרים" קפצה בין שתי הוראות סמוכות (מחלף עד הלום, קו 17): ימינה/שמאלה
-  // לסירוגין כל שנייה. סדר המסלול יציב — ההוראה מתחלפת רק כשעוברים אותה.
-  const aheadMvs = activeManeuvers
-    .map((mv) => ({ ...mv, meters: (mv.f - driverF) * metrics.total }))
-    .filter((mv) => mv.meters > -20 && mv.meters < 350)
-    .sort((a, b) => a.f - b.f);
-  // שתי הוראות שונות באותה נקודה (מחלף: היצמדו לשמאל ואז לימין) — באנר אחד, "ואז".
-  // הנתונים המוכנים כבר ממזגים כאלה (then); כאן גם למקרה שהן הגיעו נפרדות.
-  const upcomingMv = aheadMvs.length
-    ? (aheadMvs[1] && aheadMvs[1].meters - aheadMvs[0].meters < 25 && aheadMvs[1].kind !== 'roundabout' && !aheadMvs[0].then
-      ? { ...aheadMvs[0], then: aheadMvs[1].kind }
-      : aheadMvs[0])
+  // Group close instructions before filtering by driver position, so a compound
+  // instruction does not change halfway through passing the junction.
+  const groupedManeuvers = useMemoMS(() => {
+    const ordered = activeManeuvers
+      .filter((mv) => Number.isFinite(mv.f) && mv.f >= 0 && mv.f <= 1)
+      .slice().sort((a, b) => a.f - b.f);
+    const grouped = [];
+    for (let i = 0; i < ordered.length; i++) {
+      const first = ordered[i];
+      const next = ordered[i + 1];
+      if (next && !first.then && first.kind !== 'roundabout' &&
+          next.kind !== 'roundabout' && !next.then &&
+          (next.f - first.f) * metrics.total < 25) {
+        grouped.push({ ...first, then: next.kind !== first.kind ? next.kind : undefined, endF: next.f });
+        i++;
+      } else {
+        grouped.push({ ...first, endF: first.f });
+      }
+    }
+    return grouped;
+  }, [activeManeuvers, metrics.total]);
+
+  const nextMv = groupedManeuvers.find((mv) =>
+    (mv.endF - driverF) * metrics.total > -20);
+  const upcomingMv = nextMv && (nextMv.f - driverF) * metrics.total < 350
+    ? { ...nextMv, meters: Math.max(0, (nextMv.f - driverF) * metrics.total) }
     : null;
 
-  // Fallback: geometry-based look-ahead for turns (used when no OSRM maneuver is near)
-  const upcomingTurn = useMemoMS(() => metrics.nextTurn(driverF, 450), [metrics, driverF]);
-  const maneuver = upcomingMv ? upcomingMv.kind : upcomingTurn.type;
-  const metersToTurn = upcomingMv ? Math.max(0, upcomingMv.meters) : upcomingTurn.meters;
+  // A bend in a GTFS shape is not a turn instruction. Between known maneuvers,
+  // or when navigation is unavailable, show the next stop without guessing.
+  const maneuver = upcomingMv ? upcomingMv.kind : 'none';
+  const metersToTurn = upcomingMv ? upcomingMv.meters : undefined;
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
