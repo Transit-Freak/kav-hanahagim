@@ -43,7 +43,7 @@
   }
   // All controllers on this page share one channel, including route changes.
   const channels = new WeakMap();
-  function create(host, onError, now = Date.now) {
+  function create(host, onError, now = Date.now, onTiming = () => {}) {
     const synth = host.speechSynthesis;
     const supported = !!(synth && host.SpeechSynthesisUtterance);
     if (supported && !channels.has(synth)) channels.set(synth, {active:null, readyAt:0});
@@ -53,7 +53,7 @@
     const busy = () => !!(channel.active || synth?.speaking || synth?.pending || now() < channel.readyAt);
     function cancel() {
       if (!current) return;
-      current.onend = null; current.onerror = null;
+      current.onstart = null; current.onend = null; current.onerror = null;
       if (channel.active === current) {
         channel.active = null;
         channel.readyAt = now() + 300;
@@ -71,10 +71,13 @@
         const utterance = new host.SpeechSynthesisUtterance(spokenText(text));
         utterance.voice = selected; utterance.lang = selected.lang; utterance.rate = 1;
         current = utterance; channel.active = utterance;
+        let startedAt = null;
+        utterance.onstart = () => { if (channel.active === utterance) startedAt = now(); };
         const finish = error => {
           if (channel.active !== utterance) return;
           current = null; channel.active = null; channel.readyAt = now() + 200;
           if (error) onError('הכריזה נכשלה. נסו להפעיל אותה שוב.');
+          else if (startedAt !== null) onTiming({seconds: (now() - startedAt) / 1000});
         };
         utterance.onend = () => finish(false);
         utterance.onerror = () => finish(true);

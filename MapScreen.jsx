@@ -92,7 +92,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const announcements = useRefMS(null);
   if (!announcements.current) announcements.current = window.RouteSpeech.tracker();
   useEffectMS(() => {
-    speech.current = window.RouteSpeech.create(window, message => { setVoiceEnabled(false); setVoiceMessage(message); });
+    speech.current = window.RouteSpeech.create(window, message => { setVoiceEnabled(false); setVoiceMessage(message); }, Date.now, timing => { setVoiceMessage(`משך הכריזה האחרונה: ${timing.seconds.toFixed(1)} שניות`); });
     // Voices may arrive asynchronously; query the current list again on each click.
     window.speechSynthesis?.getVoices();
     const hide = () => { if (document.visibilityState !== 'visible') { speech.current?.cancel(); setPlaying(false); } };

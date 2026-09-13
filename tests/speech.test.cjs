@@ -134,3 +134,10 @@ test('replay Yavne line 1 toward East railway with slow speech and no overlappin
   assert(count>10,`expected route announcements at ${speed} km/h`);
  }
 });
+test('measure actual start-to-end speech time, excluding startup latency and cancellations',()=>{
+ let time=1000,u;const measurements=[];
+ const c=create({speechSynthesis:{getVoices:()=>[{lang:'he-IL'}],speak:v=>u=v,cancel(){}},SpeechSynthesisUtterance:class{}},()=>{},()=>time,t=>measurements.push(t));
+ c.speak('פנו ימינה');time=1500;u.onstart();time=3700;u.onend();
+ assert.equal(measurements[0].seconds,2.2);
+ time=4000;c.speak('בדיקה');u.onstart();c.cancel();assert.equal(measurements.length,1);
+});
