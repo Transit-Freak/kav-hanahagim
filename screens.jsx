@@ -159,9 +159,10 @@ function UploadScreen({ dark, onToggleDark, onLoaded, onDemo }) {
 }
 
 // ── Search screen ─────────────────────────────────────────────
-function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload }) {
-  const [mode, setMode] = useStateSC('line'); // 'line' | 'makat'
-  const [q, setQ] = useStateSC('');
+function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload, search, onSearch }) {
+  const { mode, q, page = 0 } = search;
+  const setQ = (value) => onSearch((s) => ({ ...s, q: typeof value === 'function' ? value(s.q) : value, page: 0 }));
+  const setMode = (mode) => onSearch({ mode, q: '', page: 0 });
   const allRoutes = feed ? feed.routes : window.GTFS_FEED.routes;
 
   const onKey = (k) => {
@@ -170,19 +171,22 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload }) {
     else setQ((v) => (v.length >= 6 ? v : v + k));
   };
 
-  // When a real feed is loaded the list is huge — only compute results once a
-  // query is entered; show every match (no cap).
+  // Search all routes, but render only one page to keep return navigation fast.
   let filtered, total;
   if (!q) {
     filtered = allRoutes;
     total = allRoutes.length;
   } else {
     const matches = allRoutes.filter((r) =>
-      mode === 'line' ? (r.shortName || '').startsWith(q)
-        : ((r.makat || '').startsWith(q) || (r.id || '').startsWith(q)));
+      mode === 'line' ? String(r.shortName || '').startsWith(q)
+        : (String(r.makat || '').startsWith(q) || String(r.id || '').startsWith(q)));
     total = matches.length;
     filtered = matches;
   }
+
+  const pageSize = 40;
+  const currentPage = Math.min(page, Math.max(0, Math.ceil(total / pageSize) - 1));
+  filtered = filtered.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column' }}>
@@ -208,15 +212,19 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload }) {
           boxShadow: '0 1px 3px rgba(0,0,0,0.06)',
         }}>
           <IconSearch size={22} style={{ color: 'var(--text-mut)' }} />
-          <div style={{ flex: 1, fontWeight: 800, fontSize: 24, color: q ? 'var(--text)' : 'var(--text-dim)', fontVariantNumeric: 'tabular-nums', letterSpacing: '0.04em' }}>
-            {q || (mode === 'line' ? 'הקלד מספר קו' : 'הקלד מק״ט')}
-          </div>
-          {q && <button onClick={() => setQ('')} style={{ border: 'none', background: 'var(--chip)', borderRadius: 99, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-mut)' }}><IconX size={16} /></button>}
+          <input
+            aria-label={mode === 'line' ? 'מספר קו' : 'מק״ט'}
+            placeholder={mode === 'line' ? 'הקלד מספר קו' : 'הקלד מק״ט'}
+            type="text" inputMode="numeric" autoComplete="off" maxLength={6}
+            value={q} onChange={(e) => setQ(e.target.value.replace(/[^0-9א-תa-zA-Z]/g, '').slice(0, 6))}
+            style={{ flex: 1, minWidth: 0, width: '100%', border: 0, outlineOffset: 4, background: 'transparent', fontFamily: 'inherit', fontWeight: 800, fontSize: 24, color: 'var(--text)' }}
+          />
+          {q && <button aria-label="ניקוי החיפוש" onClick={() => setQ('')} style={{ border: 'none', background: 'var(--chip)', borderRadius: 99, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-mut)' }}><IconX size={16} /></button>}
         </div>
       </div>
 
       {/* results */}
-      <div style={{ flex: 1, overflow: 'auto', padding: '12px 12px 4px' }}>
+      <div key={mode + ':' + q + ':' + currentPage} style={{ flex: 1, minHeight: 0, overflow: 'auto', padding: '12px 12px 4px' }}>
         <div style={{ fontSize: 12.5, fontWeight: 700, color: 'var(--text-mut)', padding: '0 6px 6px' }}>
           {q ? `${total.toLocaleString('he-IL')} תוצאות${total > filtered.length ? ` · מוצגות ${filtered.length}` : ''}` : (feed ? (feed.remote ? `כל ${total.toLocaleString('he-IL')} הקווים בישראל` : 'כל הקווים') : 'קווים אחרונים')}
         </div>
@@ -238,6 +246,11 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload }) {
         {filtered.length === 0 && (
           <div style={{ textAlign: 'center', color: 'var(--text-mut)', padding: '30px 0', fontSize: 15 }}>לא נמצאו קווים תואמים</div>
         )}
+        {total > pageSize && <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, padding: 12 }}>
+          <button disabled={currentPage === 0} onClick={() => onSearch((s) => ({ ...s, page: currentPage - 1 }))}>הקודם</button>
+          <span>עמוד {currentPage + 1} מתוך {Math.ceil(total / pageSize)}</span>
+          <button disabled={(currentPage + 1) * pageSize >= total} onClick={() => onSearch((s) => ({ ...s, page: currentPage + 1 }))}>הבא</button>
+        </div>}
       </div>
 
       {/* keypad */}

@@ -38,7 +38,7 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     // pause auto-follow as soon as the driver pans the map by hand
     map.on('dragstart', () => { pausedRef.current = true; setOffCenter(true); });
 
-    setTimeout(() => map.invalidateSize(), 60);
+    const resizeTimer = setTimeout(() => map.invalidateSize(), 60);
     const onResize = () => map.invalidateSize();
     window.addEventListener('resize', onResize);
     let ro;
@@ -46,7 +46,7 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
       ro = new ResizeObserver(() => map.invalidateSize());
       ro.observe(elRef.current);
     }
-    return () => { window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.remove(); mapRef.current = null; };
+    return () => { clearTimeout(resizeTimer); window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.stop(); map.remove(); mapRef.current = null; };
   }, []);
 
   // ── base layer switch ───────────────────────────────────────

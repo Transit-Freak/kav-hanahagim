@@ -92,16 +92,16 @@
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
-  <script src="route.js?v=20260913a"></script>
-  <script src="gtfs.js?v=20260913a"></script>
-  <script src="geo.js?v=20260913a"></script>
-  <script src="osrm.js?v=20260913a"></script>
-  <script src="data.js?v=20260913a"></script>
-  <script type="text/babel" src="icons.jsx?v=20260913a"></script>
-  <script type="text/babel" src="LeafletMap.jsx?v=20260913a"></script>
-  <script type="text/babel" src="ui.jsx?v=20260913a"></script>
-  <script type="text/babel" src="screens.jsx?v=20260913a"></script>
-  <script type="text/babel" src="MapScreen.jsx?v=20260913a"></script>
+  <script src="route.js?v=20260913b"></script>
+  <script src="gtfs.js?v=20260913b"></script>
+  <script src="geo.js?v=20260913b"></script>
+  <script src="osrm.js?v=20260913b"></script>
+  <script src="data.js?v=20260913b"></script>
+  <script type="text/babel" src="icons.jsx?v=20260913b"></script>
+  <script type="text/babel" src="LeafletMap.jsx?v=20260913b"></script>
+  <script type="text/babel" src="ui.jsx?v=20260913b"></script>
+  <script type="text/babel" src="screens.jsx?v=20260913b"></script>
+  <script type="text/babel" src="MapScreen.jsx?v=20260913b"></script>
 
   <script type="text/babel">
     const { useState, useEffect } = React;
@@ -117,7 +117,7 @@
       return (
         <div className="statusbar">
           <span>{t}</span>
-          <span className="gps"><span className="dot"></span>GPS פעיל</span>
+          <span className="gps"><span className="dot"></span>תצוגת מסלול</span>
         </div>
       );
     }
@@ -134,6 +134,17 @@
       );
     }
 
+    class MapBoundary extends React.Component {
+      constructor(props) { super(props); this.state = { failed: false }; }
+      static getDerivedStateFromError() { return { failed: true }; }
+      componentDidCatch(error) { console.error('Map rendering failed', error); }
+      render() {
+        return this.state.failed
+          ? <Waiting err="לא ניתן להציג את המפה של הקו. אפשר לחזור ולבחור קו אחר." onBack={this.props.onBack} />
+          : this.props.children;
+      }
+    }
+
     function App() {
       const [dark, setDark] = useState(false);
       const initial = (location.hash || '').replace('#', '');
@@ -144,6 +155,7 @@
       const [view, setView] = useState(null);
       const [routeErr, setRouteErr] = useState('');
       const [bootErr, setBootErr] = useState('');
+      const [search, setSearch] = useState({ mode: 'line', q: '', page: 0 });
       const toggle = () => setDark((d) => !d);
 
       useEffect(() => {
@@ -161,30 +173,40 @@
 
       useEffect(() => {
         const onHash = () => {
-          const h = (location.hash || '').replace('#', '');
-          if (['upload', 'search', 'map'].includes(h)) setScreen(h);
+          // A bare #map cannot identify a route; never open a map without one.
+          setScreen(location.hash === '#upload' ? 'upload' : 'search');
+          setRoute(null);
+          setView(null);
         };
         window.addEventListener('hashchange', onHash);
         return () => window.removeEventListener('hashchange', onHash);
       }, []);
 
+      // Bind each response to the selected route. Leaving the screen or choosing
+      // another route invalidates the old response, including late failures.
+      useEffect(() => {
+        if (screen !== 'map' || !route) return;
+        let cancelled = false;
+        setView(null);
+        setRouteErr('');
+        Promise.resolve().then(() => {
+          if (feed && feed.remote) return window.NahagimData.loadRoute(route.id);
+          if (feed) return window.GTFSParser.buildTripView(feed, route.id);
+          return { trip: window.GTFS_FEED.trip, geom: window.GTFS_FEED.geom };
+        }).then((v) => {
+          if (cancelled) return;
+          if (!v || !v.trip || !Array.isArray(v.trip.stops) || !Array.isArray(v.geom) || v.geom.length < 2)
+            throw new Error('אין מסלול תקין לקו שנבחר');
+          setView(v);
+        }).catch((e) => { if (!cancelled) setRouteErr(String(e.message || e)); });
+        return () => { cancelled = true; };
+      }, [screen, route, feed]);
+
+      const backToSearch = () => { setScreen('search'); setRoute(null); setView(null); setRouteErr(''); };
       const selectRoute = (r) => {
         setRoute(r);
+        setView(null);
         setRouteErr('');
-        if (feed && feed.remote) {
-          // הקובץ המוכן של הקו: תחנות, צורה והוראות נהיגה
-          setView(null);
-          setScreen('map');
-          window.NahagimData.loadRoute(r.id)
-            .then((v) => setView(v))
-            .catch((e) => setRouteErr(String(e.message || e)));
-          return;
-        }
-        if (feed) {
-          setView(window.GTFSParser.buildTripView(feed, r.id));
-        } else {
-          setView(null);
-        }
         setScreen('map');
       };
 
@@ -201,14 +223,14 @@
           onLoaded={(f) => { setFeed(f); setScreen('search'); }}
           onDemo={() => { setFeed(null); setView(null); setScreen('search'); }} />;
       else if (screen === 'search')
-        body = <SearchScreen dark={dark} onToggleDark={toggle} feed={feed} onSelect={selectRoute} onUpload={() => setScreen('upload')} />;
-      else if (feed && feed.remote && !view)
-        body = <Waiting title={`טוען את קו ${route ? route.shortName : ''}`} detail="תחנות, מסלול והוראות נהיגה" err={routeErr} onBack={() => setScreen('search')} />;
+        body = <SearchScreen dark={dark} onToggleDark={toggle} feed={feed} search={search} onSearch={setSearch} onSelect={selectRoute} onUpload={() => setScreen('upload')} />;
+      else if (!view || !route)
+        body = <Waiting title={`טוען את קו ${route ? route.shortName : ''}`} detail="תחנות, מסלול והוראות נהיגה" err={routeErr} onBack={backToSearch} />;
       else
-        body = <MapScreen route={mapRoute} trip={trip} geom={geom} dark={dark} onToggleDark={toggle}
+        body = <MapBoundary key={route.id} onBack={backToSearch}><MapScreen key={route.id} route={mapRoute} trip={trip} geom={geom} dark={dark} onToggleDark={toggle}
           maneuvers={view && view.maneuvers ? view.maneuvers : undefined}
           navSource={view && view.nav ? view.nav.status : undefined}
-          onBack={() => setScreen('search')} startF={0.28} />;
+          onBack={backToSearch} startF={0} /></MapBoundary>;
 
       return (
         <React.Fragment>

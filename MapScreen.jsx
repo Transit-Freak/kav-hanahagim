@@ -19,7 +19,7 @@ function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-mut)', display: 'flex', gap: 8, marginTop: 1, alignItems: 'center' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />בנסיעה
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />תצוגה מקדימה
           </span>
           <span>· יציאה {trip.departure}</span>
           {statusLabel ? <span style={{ color: statusColor, fontWeight: 700 }}>· {statusLabel}</span> : null}
@@ -53,7 +53,7 @@ function ManeuverBanner({ mv }) {
         </div>
         <div style={{ flex: 1, minWidth: 0 }}>
           <div style={{ fontSize: 13.5, fontWeight: 700, opacity: 0.9 }}>בעוד {dist}</div>
-          <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+          <div style={{ fontSize: 22, fontWeight: 800, lineHeight: 1.15, overflowWrap: 'anywhere' }}>{title}</div>
           {(mv.street || mv.name) && <div style={{ fontSize: 14, fontWeight: 600, opacity: 0.92, marginTop: 1 }}>אל {mv.street || mv.name}</div>}
         </div>
       </div>
@@ -62,8 +62,11 @@ function ManeuverBanner({ mv }) {
 }
 
 // navSource: 'ok' | 'weak' | 'none' כשההוראות הגיעו מוכנות מהשרת (data.js) — אז אין קריאה חיה ל-OSRM.
-function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0.28, animate = true }) {
+function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
+  const [playing, setPlaying] = useStateMS(false);
+  const focusTimer = useRefMS(null);
+  useEffectMS(() => () => clearTimeout(focusTimer.current), []);
   const [focus, setFocus] = useStateMS(null);
   const [sheetOpen, setSheetOpen] = useStateMS(false);
 
@@ -99,21 +102,24 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
   // Animate the driver puck along the route
   useEffectMS(() => {
-    if (!animate) return;
+    if (!animate || !playing) return;
     let raf, last;
     const tick = (t) => {
       if (last != null) {
-        const dt = (t - last) / 1000;
-        setDriverF((f) => { const n = f + dt / 200; return n > 1.01 ? startF : n; });
+        const dt = Math.min(0.1, (t - last) / 1000);
+        // Preview at 30 km/h, independent of route length; never loop silently.
+        setDriverF((f) => Math.min(1, f + dt * (30 / 3.6) / metrics.total));
       }
       last = t;
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [animate, startF]);
+  }, [animate, playing, metrics.total]);
 
-  const focusStop = (s) => { setFocus(s.id); setTimeout(() => setFocus((cur) => cur === s.id ? null : cur), 4000); };
+  useEffectMS(() => { if (driverF >= 1) setPlaying(false); }, [driverF]);
+
+  const focusStop = (s) => { clearTimeout(focusTimer.current); setFocus(s.id); focusTimer.current = setTimeout(() => setFocus(null), 4000); };
   const nextStop = stops.find((s) => s.f > driverF) || stops[stops.length - 1];
   const metersToNext = nextStop ? Math.max(0, (nextStop.f - driverF) * metrics.total) : 0;
 
@@ -158,6 +164,13 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} />
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--surface)', color: 'var(--text)' }}>
+        <button onClick={() => { if (driverF >= 1) setDriverF(0); setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+          {playing ? 'השהיית הדמיה' : 'הפעלת הדמיה'}
+        </button>
+        <input aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { setPlaying(false); setDriverF(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
+        <span style={{ fontSize: 12 }}>ללא GPS</span>
+      </div>
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <LeafletMap geom={geom} stops={stops} driverF={driverF} focusStopId={focus} dark={dark} follow compact toggleBottom={sheetOpen ? '62%' : 164} />
 
