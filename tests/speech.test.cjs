@@ -127,7 +127,7 @@ test('replay Yavne line 1 toward East railway with slow speech and no overlappin
     const f=meters/route.totalMeters,m=nav.next(rows,f,route.totalMeters);
     const i=m?rows.findIndex(x=>x.f===m.f&&x.kind===m.kind):-1;
     const length=i>=0?(m.f-(i?rows[i-1].f:0))*route.totalMeters:undefined;
-    const turn=t.next(m,f,route.totalMeters,length);
+    const turn=t.next(m,f,route.totalMeters,length,{speedMps:speed/3.6,seconds:4.5,nowMs:time});
     const text=turn || ((!m||m.meters>100)?t.nextStop(route.stops.find(s=>s.f>f),f):null);
     if(text)assert.equal(c.speak(text),true);
   }
@@ -140,4 +140,20 @@ test('measure actual start-to-end speech time, excluding startup latency and can
  c.speak('פנו ימינה');time=1500;u.onstart();time=3700;u.onend();
  assert.equal(measurements[0].seconds,2.2);
  time=4000;c.speak('בדיקה');u.onstart();c.cancel();assert.equal(measurements.length,1);
+});
+test('adaptive scheduling leaves time to finish and skips a 20m preparation at 30km/h',()=>{
+ const t=tracker(),m={kind:'left',f:.5};
+ const timing={speedMps:30/3.6,seconds:3,nowMs:1000};
+ assert.equal(t.next(m,.48,1000,200,timing),null);
+ assert.equal(t.next(m,.495,1000,200,{...timing,nowMs:2200}),'פנו שמאלה');
+});
+test('adaptive scheduling uses speed, speech duration and minimum spacing',()=>{
+ const m={kind:'right',f:.5},t=tracker();
+ const timing={speedMps:5,seconds:2,nowMs:0};
+ assert.ok(t.next(m,.43,1000,200,timing));
+ assert.equal(t.next(m,.46,1000,200,{...timing,nowMs:6000}),null);
+ assert.ok(t.next(m,.47,1000,200,{...timing,nowMs:8000}));
+ assert.equal(tracker().next(m,.43,1000,200,{...timing,speedMps:20,seconds:4}),null);
+ const short=tracker();assert.ok(short.next(m,.43,1000,80,timing));
+ assert.equal(short.next(m,.47,1000,80,{...timing,nowMs:10000}),null);
 });

@@ -20,13 +20,14 @@
   function tracker() {
     const seen = new Map();
     const shortApproaches = new Set();
-    return {reset(){seen.clear();shortApproaches.clear();}, nextStop(stop, f) {
+    const lastSpoken = new Map();
+    return {reset(){seen.clear();shortApproaches.clear();lastSpoken.clear();}, nextStop(stop, f) {
       if (!stop || !stop.name || !Number.isFinite(stop.f) || stop.f <= f) return null;
       const key = JSON.stringify(['stop',stop.id,stop.seq,stop.f]);
       if (seen.has(key)) return null;
       seen.set(key,1);
       return 'התחנה הבאה: ' + stopLabel(stop);
-    }, next(m, f, total, segmentMeters) {
+    }, next(m, f, total, segmentMeters, timing) {
       if (!m || !Number.isFinite(f) || !Number.isFinite(total) || total <= 0) return null;
       const meters = (m.f - f) * total;
       if (!Number.isFinite(meters) || meters < -10 || meters > 300 || !instruction(m)) return null;
@@ -35,9 +36,20 @@
       // Only finish a previously observed approach, never announce an old turn on startup.
       if (meters < 0 && !seen.has(key)) return null;
       if (!seen.has(key) && (Number.isFinite(segmentMeters) ? segmentMeters < 100 : meters < 99.99)) shortApproaches.add(key);
-      const stage = meters <= 10.01 ? 4 : shortApproaches.has(key) ? 1 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
+      let stage = meters <= 10.01 ? 4 : shortApproaches.has(key) ? 1 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
+      if (timing && meters > 10.01) {
+        const speed = Math.max(1, timing.speedMps || 0);
+        const remaining = (meters - 10) / speed;
+        const required = Math.max(1, timing.seconds || 0) + 2;
+        const time = timing.nowMs;
+        if (remaining < required || remaining > Math.max(15, required + 8)) return null;
+        const previous = seen.get(key) || 0;
+        stage = previous ? 2 : 1;
+        if (previous && (shortApproaches.has(key) || previous >= 2 || remaining > 8 || time - lastSpoken.get(key) < 8000)) return null;
+      }
       if ((seen.get(key) || 0) >= stage) return null;
       seen.set(key, stage);
+      if (timing) lastSpoken.set(key, timing.nowMs);
       return (meters <= 10.01 ? '' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
     }};
   }
@@ -49,6 +61,8 @@
     if (supported && !channels.has(synth)) channels.set(synth, {active:null, readyAt:0});
     const channel = supported ? channels.get(synth) : {active:null, readyAt:0};
     let current = null;
+    let secondsPerCharacter = 1 / 12;
+    const estimate = text => Math.max(1, spokenText(text).length * secondsPerCharacter) + 0.5;
     const voice = () => supported && synth.getVoices().find(v => /^(he|iw)([-_]|$)/i.test(v.lang));
     const busy = () => !!(channel.active || synth?.speaking || synth?.pending || now() < channel.readyAt);
     function cancel() {
@@ -61,7 +75,7 @@
       }
       current = null;
     }
-    return { supported, voice, cancel, busy, speak(text) {
+    return { supported, voice, cancel, busy, estimate, speak(text) {
       // Never cancel-and-speak in one tick: mobile engines may still be audible.
       // No queue: the caller re-evaluates the current position when we are idle.
       if (busy()) return false;
@@ -77,7 +91,11 @@
           if (channel.active !== utterance) return;
           current = null; channel.active = null; channel.readyAt = now() + 200;
           if (error) onError('הכריזה נכשלה. נסו להפעיל אותה שוב.');
-          else if (startedAt !== null) onTiming({seconds: (now() - startedAt) / 1000});
+          else if (startedAt !== null) {
+            const seconds = (now() - startedAt) / 1000;
+            if (seconds > 0 && utterance.text?.length) secondsPerCharacter = Math.max(secondsPerCharacter, seconds / utterance.text.length);
+            onTiming({seconds});
+          }
         };
         utterance.onend = () => finish(false);
         utterance.onerror = () => finish(true);

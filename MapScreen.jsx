@@ -67,6 +67,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const [playing, setPlaying] = useStateMS(false);
   const [gpsEnabled, setGpsEnabled] = useStateMS(false);
   const [gpsStatus, setGpsStatus] = useStateMS('off');
+  const gpsSpeed = useRefMS(0);
   const [screenEnabled, setScreenEnabled] = useStateMS(true);
   const [screenStatus, setScreenStatus] = useStateMS('requesting');
   const wakeLock = useRefMS(null);
@@ -121,6 +122,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     if (!navigator.geolocation) { setGpsStatus('unsupported'); return; }
     let live = true, timer;
     const tracker = window.RouteGPS.tracker(metrics);
+    let previousFix = null;
     setGpsStatus('waiting');
     const stale = () => { if (live) { setGpsStatus('stale'); speech.current?.cancel(); } };
     timer = setTimeout(stale, 15000);
@@ -131,6 +133,11 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
         const result = tracker.next(position);
         setGpsStatus(result.status);
         if (result.status === 'active') {
+          const elapsed = previousFix ? (position.timestamp - previousFix.timestamp) / 1000 : 0;
+          const derivedSpeed = elapsed > 0 ? Math.max(0, (result.f - previousFix.f) * metrics.total / elapsed) : 0;
+          const speed = position.coords.speed;
+          gpsSpeed.current = Math.min(40, Number.isFinite(speed) && speed >= 0 ? speed : derivedSpeed);
+          previousFix = {f: result.f, timestamp: position.timestamp};
           setDriverF(result.f); clearTimeout(timer); timer = setTimeout(stale, 15000);
         } else speech.current?.cancel();
       }, error => {
@@ -205,9 +212,16 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current || speech.current.busy()) return;
     const turnIndex = upcomingMv ? groupedManeuvers.findIndex(m => m.f === upcomingMv.f && m.kind === upcomingMv.kind) : -1;
     const segmentMeters = turnIndex >= 0 ? (upcomingMv.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
-    const text = announcements.current.next(upcomingMv, driverF, metrics.total, segmentMeters);
+    const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
+    const preparation = upcomingMv ? `בעוד ${Math.round(upcomingMv.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(upcomingMv)}` : '';
+    const text = announcements.current.next(upcomingMv, driverF, metrics.total, segmentMeters, {
+      speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
+    });
     if (text) speech.current?.speak(text);
     else if (!speech.current?.busy() && (!upcomingMv || upcomingMv.meters > 100)) {
+      const expectedStopText = 'התחנה הבאה: ' + window.RouteSpeech.stopLabel(nextStop);
+      const untilTurn = upcomingMv ? Math.max(0, upcomingMv.meters - 10) / Math.max(1, speed) : Infinity;
+      if (untilTurn < speech.current.estimate(expectedStopText) + 5) return;
       const stopText = announcements.current.nextStop(nextStop, driverF);
       if (stopText) speech.current?.speak(stopText);
     }
