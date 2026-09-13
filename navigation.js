@@ -7,8 +7,18 @@
       .filter((m) => m && kinds.has(m.kind) && Number.isFinite(m.f) && m.f >= 0 && m.f <= 1)
       .map((m) => ({ ...m, then: kinds.has(m.then) ? m.then : undefined }))
       .sort((a, b) => a.f - b.f);
+    // Overlapping matching chunks can supply both an incomplete and a complete
+    // instruction at the same route position. Prefer supplied, unambiguous
+    // exits only; never borrow from a nearby circle or resolve conflicting exits.
+    const exitsAt = new Map();
+    for (const row of rows) {
+      if (row.kind !== 'roundabout' || !Number.isInteger(row.exit) || row.exit <= 0) continue;
+      if (!exitsAt.has(row.f)) exitsAt.set(row.f, new Set());
+      exitsAt.get(row.f).add(row.exit);
+    }
     const result = [];
     for (const row of rows) {
+      if (row.kind === 'roundabout' && !row.exit && exitsAt.get(row.f)?.size === 1) continue;
       const previous = result[result.length - 1];
       // Remove exact duplicates only. Nearby opposite turns may be real.
       if (previous && previous.f === row.f && previous.kind === row.kind &&

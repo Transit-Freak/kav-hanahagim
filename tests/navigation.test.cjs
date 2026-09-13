@@ -22,3 +22,23 @@ test('only identical duplicates removed; no guessed turns when none exist',()=>{
  const row={f:.2,kind:'right'}; assert.equal(nav.prepare([row,{...row}]).length,1);
  assert.equal(nav.next([],0,1000),null);assert.equal(nav.next([row],.3,1000),null);
 });
+test('prefer a supplied exit at the exact same position in either input order',()=>{
+  const missing={f:.10731,kind:'roundabout',exit:null,name:'כיכר מאי 1945'};
+  const known={f:.10731,kind:'roundabout',exit:2,name:'שדרות המייסדים'};
+  for(const input of [[missing,known],[known,missing]]) {
+    const snapshot=JSON.stringify(input);
+    const rows=nav.prepare(input);
+    assert.equal(rows.length,1);
+    assert.equal(nav.next(rows,.1,10000).exit,2);
+    assert.equal(rows[0].name,known.name);
+    assert.equal(JSON.stringify(input),snapshot);
+  }
+});
+test('keep missing exits when supplied exits conflict or refer to another position',()=>{
+  const missing={f:.2,kind:'roundabout',exit:null};
+  assert.equal(nav.prepare([missing,{...missing,exit:1},{...missing,exit:2}]).length,3);
+  assert.equal(nav.prepare([missing,{...missing,f:.20001,exit:2}]).length,2);
+  assert.equal(nav.prepare([missing,{...missing,f:.8,exit:2}]).length,2);
+  for(const exit of [-1,1.5,'2']) assert.equal(nav.prepare([missing,{...missing,exit}]).length,2);
+  assert.equal(nav.prepare([missing,{f:.2,kind:'right',exit:2}]).length,2);
+});
