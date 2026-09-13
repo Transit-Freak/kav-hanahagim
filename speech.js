@@ -24,16 +24,35 @@
     const m = candidates[0];
     return m ? {...m, meters: Math.max(0, (m.f-f)*total)} : null;
   }
+  function arrivalLead(speed, seconds) {
+    return Math.max(10, Math.min(45, Math.max(0, speed || 0) * (Math.max(0, seconds || 0) + 1.2)));
+  }
   function tracker() {
     const seen = new Map();
     const shortApproaches = new Set();
     const lastSpoken = new Map();
-    return {reset(){seen.clear();shortApproaches.clear();lastSpoken.clear();}, nextStop(stop, f) {
+    const stopProgress = new Map();
+    return {reset(){seen.clear();shortApproaches.clear();lastSpoken.clear();stopProgress.clear();}, nextStop(stop, f, total, options = {}) {
       if (!stop || !stop.name || !Number.isFinite(stop.f) || stop.f <= f) return null;
       const key = JSON.stringify(['stop',stop.id,stop.seq,stop.f]);
-      if (seen.has(key)) return null;
-      seen.set(key,1);
-      return 'התחנה הבאה: ' + stopLabel(stop);
+      if (!Number.isFinite(total) || total <= 0) {
+        if (seen.has(key)) return null;
+        seen.set(key,1);
+        return 'התחנה הבאה: ' + stopLabel(stop);
+      }
+      const meters = (stop.f-f)*total;
+      const previous = stopProgress.get(key);
+      const time = options.nowMs ?? Date.now();
+      if (previous) {
+        const approaching = meters <= 250 && !previous.near;
+        const progressed = meters > 250 && previous.meters-meters >= 500;
+        if ((!approaching && !progressed) || time-previous.time < 20000 || previous.meters-meters < 30) return null;
+      }
+      stopProgress.set(key,{meters,time,near:meters<=250 || !!previous?.near});
+      const distance = meters >= 1000 ? `${(meters/1000).toFixed(1)} קילומטר` : `${Math.max(10,Math.round(meters/10)*10)} מטר`;
+      return options.continueRoute
+        ? `${options.straight ? 'המשיכו ישר' : 'המשיכו במסלול'} ועצרו בתחנה ${stopLabel(stop)} בעוד ${distance}`
+        : `התחנה הבאה: ${stopLabel(stop)}, בעוד ${distance}`;
     }, next(m, f, total, segmentMeters, timing) {
       if (!m || !Number.isFinite(f) || !Number.isFinite(total) || total <= 0) return null;
       const meters = (m.f - f) * total;
@@ -43,13 +62,14 @@
       // Only finish a previously observed approach, never announce an old turn on startup.
       if (meters < 0 && !seen.has(key)) return null;
       if (!seen.has(key) && (Number.isFinite(segmentMeters) ? segmentMeters < 100 : meters < 99.99)) shortApproaches.add(key);
-      let stage = meters <= 10.01 ? 4 : shortApproaches.has(key) ? 1 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
-      if (timing && meters > 10.01) {
+      const lead = timing?.arrivalMeters ?? 10;
+      let stage = meters <= lead + 0.01 ? 4 : shortApproaches.has(key) ? 1 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
+      if (timing && meters > lead + 0.01) {
         const speed = Math.max(1, timing.speedMps || 0);
-        const remaining = (meters - 10) / speed;
+        const remaining = (meters - lead) / speed;
         const required = Math.max(1, timing.seconds || 0) + 2;
         const time = timing.nowMs;
-        if (remaining < required || remaining > Math.max(15, required + 8)) return null;
+        if (remaining + 0.01 < required || remaining > Math.max(15, required + 8)) return null;
         const previous = seen.get(key) || 0;
         stage = previous ? 2 : 1;
         if (previous && (shortApproaches.has(key) || previous >= 2 || remaining > 8 || time - lastSpoken.get(key) < 8000)) return null;
@@ -57,7 +77,7 @@
       if ((seen.get(key) || 0) >= stage) return null;
       seen.set(key, stage);
       if (timing) lastSpoken.set(key, timing.nowMs);
-      return (meters <= 10.01 ? '' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
+      return (meters <= lead + 0.01 ? '' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
     }};
   }
   // All controllers on this page share one channel, including route changes.
@@ -117,7 +137,7 @@
       }
     }};
   }
-  const api = {nextTurn,spokenText,instruction,stopLabel,tracker,create};
+  const api = {arrivalLead,nextTurn,spokenText,instruction,stopLabel,tracker,create};
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RouteSpeech = api;
 })(typeof window === 'undefined' ? {} : window);

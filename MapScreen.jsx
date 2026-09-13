@@ -211,24 +211,28 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   useEffectMS(() => {
     if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current) return;
     const speechTurn = window.RouteSpeech.nextTurn(groupedManeuvers, driverF, metrics.total);
-    const immediate = speechTurn && speechTurn.meters <= 10.01;
+    const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
+    const lead = window.RouteSpeech.arrivalLead(speed, speech.current.estimate(window.RouteSpeech.instruction(speechTurn)));
+    const immediate = speechTurn && speechTurn.meters <= lead;
     if (speech.current.busy()) {
       if (immediate) speech.current.interruptFor(2);
       return;
     }
     const turnIndex = speechTurn ? groupedManeuvers.findIndex(m => m.f === speechTurn.f && m.kind === speechTurn.kind) : -1;
     const segmentMeters = turnIndex >= 0 ? (speechTurn.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
-    const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
     const preparation = speechTurn ? `בעוד ${Math.round(speechTurn.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(speechTurn)}` : '';
     const text = announcements.current.next(speechTurn, driverF, metrics.total, segmentMeters, {
-      speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
+      arrivalMeters: lead, speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
     });
     if (text) speech.current?.speak(text, immediate ? 2 : 1);
     else if (!speech.current?.busy() && (!speechTurn || speechTurn.meters > 100)) {
-      const expectedStopText = 'התחנה הבאה: ' + window.RouteSpeech.stopLabel(nextStop);
-      const untilTurn = speechTurn ? Math.max(0, speechTurn.meters - 10) / Math.max(1, speed) : Infinity;
+      const expectedStopText = 'המשיכו במסלול ועצרו בתחנה ' + window.RouteSpeech.stopLabel(nextStop) + ' בעוד 250 מטר';
+      const untilTurn = speechTurn ? Math.max(0, speechTurn.meters - lead) / Math.max(1, speed) : Infinity;
       if (untilTurn < speech.current.estimate(expectedStopText) + 5) return;
-      const stopText = announcements.current.nextStop(nextStop, driverF);
+      const stopText = announcements.current.nextStop(nextStop, driverF, metrics.total, {
+        nowMs: Date.now(), continueRoute: !!speechTurn && speechTurn.meters >= 1000 && metersToNext < speechTurn.meters,
+        straight: osrmStatus === 'ok'
+      });
       if (stopText) speech.current?.speak(stopText);
     }
   }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total, speechTick, nextStop]);
@@ -240,6 +244,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const maneuver = upcomingMv ? upcomingMv.kind : 'none';
   const metersToTurn = upcomingMv ? upcomingMv.meters : undefined;
 
+  const stationFirst = nextStop && nextStop.f > driverF && upcomingMv && upcomingMv.meters >= 1000 && metersToNext < upcomingMv.meters;
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} gpsEnabled={gpsEnabled} />
@@ -263,7 +268,12 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
         {/* floating navigation cue */}
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
-          {upcomingMv
+          {stationFirst ? <div style={{background:'var(--accent)',color:'#fff',borderRadius:18,padding:'16px',pointerEvents:'auto'}}>
+              <div style={{fontSize:14,fontWeight:700}}>התחנה הבאה · בעוד {fmtDist(metersToNext)}</div>
+              <div style={{fontSize:28,fontWeight:800,lineHeight:1.2,marginTop:8,overflowWrap:'anywhere'}}>{window.RouteSpeech.stopLabel(nextStop)}</div>
+              <div style={{fontSize:17,marginTop:10}}>{osrmStatus === 'ok' ? 'המשיכו ישר ועצרו בתחנה' : 'המשיכו במסלול ועצרו בתחנה'}</div>
+              <div style={{fontSize:13,marginTop:10,opacity:.9}}>הפנייה הבאה בעוד {fmtDist(upcomingMv.meters)}</div>
+            </div> : upcomingMv
             ? <div><ManeuverBanner mv={upcomingMv} />
                 {nextStop && <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
                   התחנה הבאה: {window.RouteSpeech.stopLabel(nextStop)} · {fmtDist(metersToNext)}

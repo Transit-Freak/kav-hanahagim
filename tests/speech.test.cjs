@@ -175,3 +175,18 @@ test('urgent turn stops preparation but waits for native engine release before s
  synth.speaking=false;assert.equal(c.speak('פנו שמאלה',2),true);
  c.interruptFor(1);c.interruptFor(2);assert.equal(cancels,1);assert.equal(calls.length,2);
 });
+test('station reminders follow progress and approach, never idle repetition',()=>{
+ const t=tracker(),s={id:'2',seq:2,f:1,name:'שד. הסנהדרין/שד. ירושלים'};
+ assert.match(t.nextStop(s,0,2000,{nowMs:0}),/2.0 קילומטר/);
+ assert.equal(t.nextStop(s,0,2000,{nowMs:60000}),null);
+ assert.match(t.nextStop(s,.3,2000,{nowMs:60000}),/1.4 קילומטר/);
+ assert.equal(t.nextStop(s,.31,2000,{nowMs:65000}),null);
+ assert.match(t.nextStop(s,.905,2000,{nowMs:120000,continueRoute:true}),/המשיכו במסלול.*190 מטר/);
+ assert.equal(t.nextStop(s,.91,2000,{nowMs:150000}),null);
+});
+test('arrival cue begins before the junction based on speed and voice duration',()=>{
+ const {arrivalLead}=require('../speech.js'),lead=arrivalLead(30/3.6,1.2);
+ assert.equal(lead,20);
+ const t=tracker();assert.equal(t.next({f:.5,kind:'left'},.481,1000,300,{speedMps:30/3.6,seconds:3,arrivalMeters:lead,nowMs:0}),'פנו שמאלה');
+ assert.equal(arrivalLead(0,2),10);assert.equal(arrivalLead(30,5),45);
+});
