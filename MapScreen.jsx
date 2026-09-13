@@ -41,7 +41,7 @@ function ManeuverBanner({ mv }) {
   const dist = m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
   const titleOf = (k) => k.startsWith('keep') ? (k.endsWith('right') ? 'היצמדו לימין' : 'היצמדו לשמאל') : (k.endsWith('right') ? 'פנו ימינה' : 'פנו שמאלה');
   const title = mv.kind === 'roundabout'
-    ? (mv.exit ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר` : 'המשיכו בכיכר · מספר היציאה אינו זמין')
+    ? (mv.exit ? `צאו ביציאה ${EXIT_HE[mv.exit] || 'ה־' + mv.exit} בכיכר` : 'כיכר בהמשך · מספר היציאה אינו זמין')
     // הוראה מורכבת: שתי הוראות באותה נקודה (מחלף) — "היצמדו לשמאל, ואז לימין"
     : mv.then ? `${titleOf(mv.kind)}, ואז ${titleOf(mv.then).replace(/^(היצמדו|פנו) /, '')}`
     : titleOf(mv.kind);
@@ -65,6 +65,38 @@ function ManeuverBanner({ mv }) {
 function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
   const [playing, setPlaying] = useStateMS(false);
+  const [screenEnabled, setScreenEnabled] = useStateMS(true);
+  const [screenStatus, setScreenStatus] = useStateMS('requesting');
+  const wakeLock = useRefMS(null);
+  useEffectMS(() => {
+    const controller = window.RouteWakeLock.create(window, setScreenStatus);
+    wakeLock.current = controller;
+    controller.setEnabled(true);
+    return () => controller.dispose();
+  }, []);
+  const toggleScreen = () => {
+    const enabled = !screenEnabled;
+    setScreenEnabled(enabled); wakeLock.current?.setEnabled(enabled);
+  };
+  const [voiceEnabled, setVoiceEnabled] = useStateMS(false);
+  const [voiceMessage, setVoiceMessage] = useStateMS('');
+  const speech = useRefMS(null);
+  const announcements = useRefMS(null);
+  if (!announcements.current) announcements.current = window.RouteSpeech.tracker();
+  useEffectMS(() => {
+    speech.current = window.RouteSpeech.create(window, message => { setVoiceEnabled(false); setVoiceMessage(message); });
+    // Voices may arrive asynchronously; query the current list again on each click.
+    window.speechSynthesis?.getVoices();
+    const hide = () => { if (document.visibilityState !== 'visible') { speech.current?.cancel(); setPlaying(false); } };
+    document.addEventListener('visibilitychange', hide);
+    return () => { document.removeEventListener('visibilitychange', hide); speech.current?.cancel(); };
+  }, []);
+  const toggleVoice = () => {
+    if (voiceEnabled) { speech.current.cancel(); setVoiceEnabled(false); setVoiceMessage(''); return; }
+    if (!speech.current?.supported) { setVoiceMessage('הדפדפן אינו תומך בכריזה.'); return; }
+    if (speech.current.speak('כריזת פניות הופעלה')) { setVoiceEnabled(true); setVoiceMessage('כריזה בעברית בזמן ההדמיה'); }
+  };
+  const seek = f => { speech.current?.cancel(); announcements.current.reset(); setPlaying(false); setDriverF(f); };
   const focusTimer = useRefMS(null);
   useEffectMS(() => () => clearTimeout(focusTimer.current), []);
   const [focus, setFocus] = useStateMS(null);
@@ -133,6 +165,14 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     [activeManeuvers, metrics.total]);
   const upcomingMv = window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
+  useEffectMS(() => {
+    if (!voiceEnabled || !playing) return;
+    const text = announcements.current.next(upcomingMv, driverF, metrics.total);
+    if (text) speech.current?.speak(text);
+  }, [voiceEnabled, playing, driverF, groupedManeuvers, metrics.total]);
+
+  useEffectMS(() => { if (!playing) speech.current?.cancel(); }, [playing]);
+
   // A bend in a GTFS shape is not a turn instruction. Between known maneuvers,
   // or when navigation is unavailable, show the next stop without guessing.
   const maneuver = upcomingMv ? upcomingMv.kind : 'none';
@@ -142,11 +182,17 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--surface)', color: 'var(--text)' }}>
-        <button onClick={() => { if (driverF >= 1) setDriverF(0); setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+        <button onClick={() => { if (driverF >= 1) { announcements.current.reset(); setDriverF(0); } setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
           {playing ? 'השהיית הדמיה' : 'הפעלת הדמיה'}
         </button>
-        <input aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { setPlaying(false); setDriverF(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
+        <input aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { seek(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
         <span style={{ fontSize: 12 }}>ללא GPS</span>
+      </div>
+      <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '4px 14px 8px', background: 'var(--surface)', color: 'var(--text)' }}>
+        <button aria-pressed={screenEnabled} onClick={toggleScreen} style={{ border: '1px solid var(--hair)', borderRadius: 10, padding: '8px 12px', background: 'var(--chip)', color: 'var(--text)', cursor: 'pointer' }}>{screenEnabled ? 'כיבוי שמירת מסך' : 'השארת מסך דולק'}</button>
+        <button aria-pressed={voiceEnabled} onClick={toggleVoice} style={{ border: '1px solid var(--hair)', borderRadius: 10, padding: '8px 12px', background: 'var(--chip)', color: 'var(--text)', cursor: 'pointer' }}>{voiceEnabled ? 'כיבוי כריזה' : 'הפעלת כריזה'}</button>
+        <span role="status" style={{ fontSize: 12, width: '100%' }}>{({active:'שמירת מסך פעילה',requesting:'מפעיל שמירת מסך…',off:'שמירת מסך כבויה',unsupported:'הדפדפן אינו תומך בשמירת מסך',unavailable:'שמירת המסך לא הופעלה במכשיר',released:'שמירת המסך הופסקה במכשיר'})[screenStatus]}</span>
+        <span role="status" style={{ fontSize: 12, flex: 1 }}>{voiceMessage}</span>
       </div>
       <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
         <LeafletMap geom={geom} stops={stops} driverF={driverF} focusStopId={focus} dark={dark} follow compact toggleBottom={sheetOpen ? '62%' : 164} />
