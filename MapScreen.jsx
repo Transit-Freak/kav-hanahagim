@@ -209,18 +209,24 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
   useEffectMS(() => {
-    if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current || speech.current.busy()) return;
-    const turnIndex = upcomingMv ? groupedManeuvers.findIndex(m => m.f === upcomingMv.f && m.kind === upcomingMv.kind) : -1;
-    const segmentMeters = turnIndex >= 0 ? (upcomingMv.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
+    if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current) return;
+    const speechTurn = window.RouteSpeech.nextTurn(groupedManeuvers, driverF, metrics.total);
+    const immediate = speechTurn && speechTurn.meters <= 10.01;
+    if (speech.current.busy()) {
+      if (immediate) speech.current.interruptFor(2);
+      return;
+    }
+    const turnIndex = speechTurn ? groupedManeuvers.findIndex(m => m.f === speechTurn.f && m.kind === speechTurn.kind) : -1;
+    const segmentMeters = turnIndex >= 0 ? (speechTurn.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
     const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
-    const preparation = upcomingMv ? `בעוד ${Math.round(upcomingMv.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(upcomingMv)}` : '';
-    const text = announcements.current.next(upcomingMv, driverF, metrics.total, segmentMeters, {
+    const preparation = speechTurn ? `בעוד ${Math.round(speechTurn.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(speechTurn)}` : '';
+    const text = announcements.current.next(speechTurn, driverF, metrics.total, segmentMeters, {
       speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
     });
-    if (text) speech.current?.speak(text);
-    else if (!speech.current?.busy() && (!upcomingMv || upcomingMv.meters > 100)) {
+    if (text) speech.current?.speak(text, immediate ? 2 : 1);
+    else if (!speech.current?.busy() && (!speechTurn || speechTurn.meters > 100)) {
       const expectedStopText = 'התחנה הבאה: ' + window.RouteSpeech.stopLabel(nextStop);
-      const untilTurn = upcomingMv ? Math.max(0, upcomingMv.meters - 10) / Math.max(1, speed) : Infinity;
+      const untilTurn = speechTurn ? Math.max(0, speechTurn.meters - 10) / Math.max(1, speed) : Infinity;
       if (untilTurn < speech.current.estimate(expectedStopText) + 5) return;
       const stopText = announcements.current.nextStop(nextStop, driverF);
       if (stopText) speech.current?.speak(stopText);

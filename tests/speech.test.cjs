@@ -157,3 +157,21 @@ test('adaptive scheduling uses speed, speech duration and minimum spacing',()=>{
  const short=tracker();assert.ok(short.next(m,.43,1000,80,timing));
  assert.equal(short.next(m,.47,1000,80,{...timing,nowMs:10000}),null);
 });
+test('select earliest supplied turn instead of announcing a later turn across it',()=>{
+ const {nextTurn}=require('../speech.js');
+ const rows=[{f:.56,kind:'right'},{f:.50,kind:'left'},{f:.52,kind:'roundabout',exit:2}];
+ assert.equal(nextTurn(rows,.49,1000).kind,'left');
+ assert.equal(nextTurn(rows,.511,1000).kind,'roundabout');
+ assert.equal(nextTurn(rows,.54,1000).kind,'right');
+});
+test('urgent turn stops preparation but waits for native engine release before speaking',()=>{
+ let time=0,cancels=0;const calls=[];
+ const synth={speaking:false,pending:false,getVoices:()=>[{lang:'he-IL'}],speak:u=>{calls.push(u);synth.speaking=true;},cancel:()=>cancels++};
+ const c=create({speechSynthesis:synth,SpeechSynthesisUtterance:class{}},()=>{},()=>time);
+ c.speak('בעוד 100 מטר פנו שמאלה',1);
+ c.interruptFor(2);assert.equal(cancels,1);
+ assert.equal(c.speak('פנו שמאלה',2),false);
+ time=400;assert.equal(c.speak('פנו שמאלה',2),false);
+ synth.speaking=false;assert.equal(c.speak('פנו שמאלה',2),true);
+ c.interruptFor(1);c.interruptFor(2);assert.equal(cancels,1);assert.equal(calls.length,2);
+});

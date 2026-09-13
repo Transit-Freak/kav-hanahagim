@@ -17,6 +17,13 @@
     const platform = stop.platform || stop.platform_code;
     return name + (platform && !name.includes('רציף') ? ` · רציף ${platform}` : '');
   }
+  function nextTurn(rows, f, total) {
+    if (!Number.isFinite(f) || !Number.isFinite(total) || total <= 0) return null;
+    const candidates = rows.filter(m => Number.isFinite(m.f) && instruction(m) && (m.f - f) * total >= -10)
+      .sort((a,b) => a.f-b.f);
+    const m = candidates[0];
+    return m ? {...m, meters: Math.max(0, (m.f-f)*total)} : null;
+  }
   function tracker() {
     const seen = new Map();
     const shortApproaches = new Set();
@@ -61,6 +68,7 @@
     if (supported && !channels.has(synth)) channels.set(synth, {active:null, readyAt:0});
     const channel = supported ? channels.get(synth) : {active:null, readyAt:0};
     let current = null;
+    let currentPriority = 0;
     let secondsPerCharacter = 1 / 12;
     const estimate = text => Math.max(1, spokenText(text).length * secondsPerCharacter) + 0.5;
     const voice = () => supported && synth.getVoices().find(v => /^(he|iw)([-_]|$)/i.test(v.lang));
@@ -75,7 +83,9 @@
       }
       current = null;
     }
-    return { supported, voice, cancel, busy, estimate, speak(text) {
+    return { supported, voice, cancel, busy, estimate,
+      interruptFor(priority) { if (current && currentPriority < priority) cancel(); },
+      speak(text, priority = 0) {
       // Never cancel-and-speak in one tick: mobile engines may still be audible.
       // No queue: the caller re-evaluates the current position when we are idle.
       if (busy()) return false;
@@ -84,7 +94,7 @@
       try {
         const utterance = new host.SpeechSynthesisUtterance(spokenText(text));
         utterance.voice = selected; utterance.lang = selected.lang; utterance.rate = 1;
-        current = utterance; channel.active = utterance;
+        current = utterance; currentPriority = priority; channel.active = utterance;
         let startedAt = null;
         utterance.onstart = () => { if (channel.active === utterance) startedAt = now(); };
         const finish = error => {
@@ -107,7 +117,7 @@
       }
     }};
   }
-  const api = {spokenText,instruction,stopLabel,tracker,create};
+  const api = {nextTurn,spokenText,instruction,stopLabel,tracker,create};
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RouteSpeech = api;
 })(typeof window === 'undefined' ? {} : window);
