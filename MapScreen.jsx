@@ -203,7 +203,9 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
   useEffectMS(() => {
     if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible') return;
-    const text = announcements.current.next(upcomingMv, driverF, metrics.total);
+    const turnIndex = upcomingMv ? groupedManeuvers.findIndex(m => m.f === upcomingMv.f && m.kind === upcomingMv.kind) : -1;
+    const segmentMeters = turnIndex >= 0 ? (upcomingMv.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
+    const text = announcements.current.next(upcomingMv, driverF, metrics.total, segmentMeters);
     if (text) speech.current?.speak(text);
     else if (!speech.current?.busy() && (!upcomingMv || upcomingMv.meters > 100)) {
       const stopText = announcements.current.nextStop(nextStop, driverF);

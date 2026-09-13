@@ -37,7 +37,7 @@ test('speech chooses Hebrew, replaces pending speech, cancels, and reports missi
 test('final approach is announced once at 20m or when first seen at 15m',()=>{
  const m={kind:'left',f:.5},t=tracker();
  assert.match(t.next(m,.45,1000),/50 מטר/);
- assert.match(t.next(m,.485,1000),/20 מטר/);
+ assert.equal(t.next(m,.485,1000),null);
  assert.match(t.next(m,.49,1000),/כעת, פנו שמאלה/);
  assert.equal(t.next(m,.51,1000),null);
 });
@@ -73,4 +73,18 @@ test('Hebrew boulevard abbreviations are expanded only as whole tokens',()=>{
  let utterance;
  const c=create({SpeechSynthesisUtterance:class{constructor(t){this.text=t;}},speechSynthesis:{getVoices:()=>[{lang:'he-IL'}],speak:u=>utterance=u,cancel(){}}},()=>{});
  c.speak('שד׳ הרצל');assert.equal(utterance.text,'שדרות הרצל');
+});
+test('short segment gets one advance cue plus arrival, without 50m or 20m repeats',()=>{
+ const t=tracker(),m={kind:'right',f:.5};
+ assert.match(t.next(m,.42,1000,80),/80 מטר/);
+ assert.equal(t.next(m,.45,1000,80),null);
+ assert.equal(t.next(m,.48,1000,80),null);
+ assert.equal(t.next(m,.495,1000,80),'כעת, פנו ימינה');
+ assert.equal(t.next(m,.5,1000,80),null);
+ t.reset();assert.match(t.next(m,.42,1000,80),/80 מטר/);
+});
+test('long segment retains advance stages and starting at arrival speaks once',()=>{
+ const t=tracker(),m={kind:'left',f:.5};
+ assert.ok(t.next(m,.42,1000,200));assert.ok(t.next(m,.45,1000,200));assert.ok(t.next(m,.48,1000,200));
+ const near=tracker();assert.equal(near.next(m,.495,1000,80),'כעת, פנו שמאלה');assert.equal(near.next(m,.499,1000,80),null);
 });
