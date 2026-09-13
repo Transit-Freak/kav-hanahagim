@@ -27,6 +27,10 @@
   function arrivalLead(speed, seconds) {
     return Math.max(10, Math.min(45, Math.max(0, speed || 0) * (Math.max(0, seconds || 0) + 1.2)));
   }
+  function stationFirst(stop, f, total, turn) {
+    return !!(stop && Number.isFinite(stop.f) && stop.f > f && total > 0 &&
+      (!turn || (turn.f-stop.f)*total >= 200 - 0.01));
+  }
   function tracker() {
     const seen = new Map();
     const shortApproaches = new Set();
@@ -43,6 +47,12 @@
       const meters = (stop.f-f)*total;
       const previous = stopProgress.get(key);
       const time = options.nowMs ?? Date.now();
+      if (meters <= 20.01) {
+        if (previous?.arrived) return null;
+        stopProgress.set(key,{meters,time,near:true,arrived:true});
+        return 'עצרו בתחנה ' + stopLabel(stop);
+      }
+      if (previous?.arrived) return null;
       if (previous) {
         const approaching = meters <= 250 && !previous.near;
         const progressed = meters > 250 && previous.meters-meters >= 500;
@@ -137,7 +147,7 @@
       }
     }};
   }
-  const api = {arrivalLead,nextTurn,spokenText,instruction,stopLabel,tracker,create};
+  const api = {stationFirst,arrivalLead,nextTurn,spokenText,instruction,stopLabel,tracker,create};
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RouteSpeech = api;
 })(typeof window === 'undefined' ? {} : window);

@@ -190,3 +190,19 @@ test('arrival cue begins before the junction based on speed and voice duration',
  const t=tracker();assert.equal(t.next({f:.5,kind:'left'},.481,1000,300,{speedMps:30/3.6,seconds:3,arrivalMeters:lead,nowMs:0}),'פנו שמאלה');
  assert.equal(arrivalLead(0,2),10);assert.equal(arrivalLead(30,5),45);
 });
+test('stop arrival is independent of recent reminder cooldown and spoken once',()=>{
+ const t=tracker(),s={id:'1',seq:1,name:'הסנהדרין/ירושלים',f:.5};
+ assert.ok(t.nextStop(s,.31,1000,{nowMs:0}));
+ assert.equal(t.nextStop(s,.48,1000,{nowMs:10000}),'עצרו בתחנה הסנהדרין/ירושלים');
+ assert.equal(t.nextStop(s,.49,1000,{nowMs:12000}),null);
+ assert.equal(t.nextStop(s,.51,1000,{nowMs:14000}),null);
+ assert.equal(tracker().nextStop(s,.485,1000,{nowMs:0}),'עצרו בתחנה הסנהדרין/ירושלים');
+});
+test('station card depends on the 200m gap after station, not distance from vehicle',()=>{
+ const {stationFirst}=require('../speech.js'),s={f:.4};
+ assert.equal(stationFirst(s,.1,1000,{f:.6}),true);
+ assert.equal(stationFirst(s,.1,1000,{f:.59}),false);
+ assert.equal(stationFirst(s,.1,1000,{f:.3}),false);
+ assert.equal(stationFirst(s,.1,1000,null),true);
+ assert.equal(stationFirst(s,.5,1000,null),false);
+});

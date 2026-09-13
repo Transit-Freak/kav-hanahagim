@@ -214,13 +214,19 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
     const lead = window.RouteSpeech.arrivalLead(speed, speech.current.estimate(window.RouteSpeech.instruction(speechTurn)));
     const immediate = speechTurn && speechTurn.meters <= lead;
+    const arrivingStop = nextStop && nextStop.f > driverF && metersToNext <= 20.01;
+    const stopBeforeTurn = !speechTurn || nextStop?.f < speechTurn.f;
     if (speech.current.busy()) {
-      if (immediate) speech.current.interruptFor(2);
+      if (immediate || (arrivingStop && stopBeforeTurn)) speech.current.interruptFor(2);
       return;
     }
     const turnIndex = speechTurn ? groupedManeuvers.findIndex(m => m.f === speechTurn.f && m.kind === speechTurn.kind) : -1;
     const segmentMeters = turnIndex >= 0 ? (speechTurn.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
     const preparation = speechTurn ? `בעוד ${Math.round(speechTurn.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(speechTurn)}` : '';
+    if (arrivingStop && stopBeforeTurn) {
+      const arrivalText = announcements.current.nextStop(nextStop, driverF, metrics.total, {nowMs: Date.now()});
+      if (arrivalText) { speech.current.speak(arrivalText, 2); return; }
+    }
     const text = announcements.current.next(speechTurn, driverF, metrics.total, segmentMeters, {
       arrivalMeters: lead, speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
     });
@@ -244,7 +250,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const maneuver = upcomingMv ? upcomingMv.kind : 'none';
   const metersToTurn = upcomingMv ? upcomingMv.meters : undefined;
 
-  const stationFirst = nextStop && nextStop.f > driverF && upcomingMv && upcomingMv.meters >= 1000 && metersToNext < upcomingMv.meters;
+  const stationFirst = window.RouteSpeech.stationFirst(nextStop, driverF, metrics.total, upcomingMv);
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
       <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} gpsEnabled={gpsEnabled} />
@@ -272,7 +278,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
               <div style={{fontSize:14,fontWeight:700}}>התחנה הבאה · בעוד {fmtDist(metersToNext)}</div>
               <div style={{fontSize:28,fontWeight:800,lineHeight:1.2,marginTop:8,overflowWrap:'anywhere'}}>{window.RouteSpeech.stopLabel(nextStop)}</div>
               <div style={{fontSize:17,marginTop:10}}>{osrmStatus === 'ok' ? 'המשיכו ישר ועצרו בתחנה' : 'המשיכו במסלול ועצרו בתחנה'}</div>
-              <div style={{fontSize:13,marginTop:10,opacity:.9}}>הפנייה הבאה בעוד {fmtDist(upcomingMv.meters)}</div>
+              
             </div> : upcomingMv
             ? <div><ManeuverBanner mv={upcomingMv} />
                 {nextStop && <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
