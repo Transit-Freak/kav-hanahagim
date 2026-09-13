@@ -23,12 +23,12 @@ test('missing exit never invents a direction',()=>{
  assert.match(instruction({kind:'roundabout',exit:2}),/מספר 2/);
  assert.match(instruction({kind:'keep-left',then:'right'}),/היצמדו לשמאל, ואז פנו ימינה/);
 });
-test('speech chooses Hebrew, replaces pending speech, cancels, and reports missing voice',()=>{
+test('speech chooses Hebrew, refuses overlap, cancels, and reports missing voice',()=>{
  let calls=[],cancelled=0,errors=[],voices=[{lang:'he-IL'}];
  const host={SpeechSynthesisUtterance:class{constructor(text){this.text=text;}},speechSynthesis:{getVoices:()=>voices,speak:u=>calls.push(u),cancel:()=>cancelled++}};
- const c=create(host,e=>errors.push(e));
+ let time=1000;const c=create(host,e=>errors.push(e),()=>time);
  assert.equal(c.speak('א'),true);assert.equal(calls[0].lang,'he-IL');
- c.speak('ב');assert.equal(cancelled,1);c.cancel();assert.equal(cancelled,2);
+ assert.equal(c.speak('ב'),false);assert.equal(calls.length,1);c.cancel();assert.equal(cancelled,1);time+=301;
  voices=[];assert.equal(c.speak('ג'),false);assert.equal(errors.length,1);
  voices=[{lang:'he-IL'}];assert.equal(c.speak('ד'),true);
  calls.at(-1).onerror();assert.equal(errors.length,2);
@@ -87,4 +87,50 @@ test('long segment retains advance stages and starting at arrival speaks once',(
  const t=tracker(),m={kind:'left',f:.5};
  assert.ok(t.next(m,.42,1000,200));assert.ok(t.next(m,.45,1000,200));assert.ok(t.next(m,.48,1000,200));
  const near=tracker();assert.equal(near.next(m,.495,1000,80),'פנו שמאלה');assert.equal(near.next(m,.499,1000,80),null);
+});
+test('engine speaking and pending block new speech even after end or cancellation',()=>{
+ let time=1000;const calls=[];
+ const synth={speaking:false,pending:false,getVoices:()=>[{lang:'he-IL'}],speak:u=>calls.push(u),cancel(){}};
+ const host={speechSynthesis:synth,SpeechSynthesisUtterance:class{constructor(text){this.text=text;}}};
+ const a=create(host,()=>{},()=>time),b=create(host,()=>{},()=>time);
+ assert.equal(a.speak('בעוד 20 מטר פנו שמאלה'),true);
+ assert.equal(a.speak('פנו שמאלה'),false);assert.equal(b.speak('תחנה'),false);
+ calls[0].onend();assert.equal(a.speak('פנו שמאלה'),false);
+ time+=201;synth.speaking=true;assert.equal(a.speak('פנו שמאלה'),false);
+ synth.speaking=false;synth.pending=true;assert.equal(a.speak('פנו שמאלה'),false);
+ synth.pending=false;assert.equal(a.speak('פנו שמאלה'),true);
+ a.cancel();assert.equal(b.speak('תחנה'),false);time+=301;
+ assert.equal(b.speak('תחנה'),true);assert.equal(calls.length,3);
+});
+test('busy approach is reconsidered at latest position instead of queueing stale distances',()=>{
+ const t=tracker(),m={kind:'right',f:.5};
+ t.next(m,.4,1000,200);
+ // While speech is busy the screen does not call the tracker at 50m or 20m.
+ assert.equal(t.next(m,.495,1000,200),'פנו ימינה');
+ assert.equal(t.next(m,.499,1000,200),null);
+ const passed=tracker();passed.next(m,.4,1000,200);
+ assert.equal(passed.next(m,.52,1000,200),null);
+});
+test('replay Yavne line 1 toward East railway with slow speech and no overlapping calls',()=>{
+ const route=require('./fixtures/yavne-line-1-east.json'),nav=require('../navigation.js');
+ for(const speed of [15,30,50]) {
+  let time=0,endAt=0,active=null,count=0;
+  const synth={speaking:false,pending:false,getVoices:()=>[{lang:'he-IL'}],cancel(){throw Error('unexpected interruption');},speak(u){
+    assert.equal(active,null,'previous announcement must finish first');
+    active=u;synth.speaking=true;endAt=time+4500;count++;
+  }};
+  const c=create({speechSynthesis:synth,SpeechSynthesisUtterance:class{constructor(t){this.text=t;}}},m=>assert.fail(m),()=>time);
+  const t=tracker(),rows=nav.prepare(route.maneuvers,route.totalMeters);
+  for(let meters=0;meters<route.totalMeters;meters+=speed/3.6/4,time+=250){
+    if(active && time>=endAt){const u=active;active=null;synth.speaking=false;u.onend();}
+    if(c.busy())continue;
+    const f=meters/route.totalMeters,m=nav.next(rows,f,route.totalMeters);
+    const i=m?rows.findIndex(x=>x.f===m.f&&x.kind===m.kind):-1;
+    const length=i>=0?(m.f-(i?rows[i-1].f:0))*route.totalMeters:undefined;
+    const turn=t.next(m,f,route.totalMeters,length);
+    const text=turn || ((!m||m.meters>100)?t.nextStop(route.stops.find(s=>s.f>f),f):null);
+    if(text)assert.equal(c.speak(text),true);
+  }
+  assert(count>10,`expected route announcements at ${speed} km/h`);
+ }
 });

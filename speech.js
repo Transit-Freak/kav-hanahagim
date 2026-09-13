@@ -41,24 +41,49 @@
       return (meters <= 10.01 ? '' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
     }};
   }
-  function create(host, onError) {
+  // All controllers on this page share one channel, including route changes.
+  const channels = new WeakMap();
+  function create(host, onError, now = Date.now) {
     const synth = host.speechSynthesis;
-    let current = null;
     const supported = !!(synth && host.SpeechSynthesisUtterance);
+    if (supported && !channels.has(synth)) channels.set(synth, {active:null, readyAt:0});
+    const channel = supported ? channels.get(synth) : {active:null, readyAt:0};
+    let current = null;
     const voice = () => supported && synth.getVoices().find(v => /^(he|iw)([-_]|$)/i.test(v.lang));
-    function cancel() { if(current) { current.onerror = null; current = null; synth.cancel(); } }
-    return { supported, voice, cancel, busy: () => !!current, speak(text) {
+    const busy = () => !!(channel.active || synth?.speaking || synth?.pending || now() < channel.readyAt);
+    function cancel() {
+      if (!current) return;
+      current.onend = null; current.onerror = null;
+      if (channel.active === current) {
+        channel.active = null;
+        channel.readyAt = now() + 300;
+        synth.cancel();
+      }
+      current = null;
+    }
+    return { supported, voice, cancel, busy, speak(text) {
+      // Never cancel-and-speak in one tick: mobile engines may still be audible.
+      // No queue: the caller re-evaluates the current position when we are idle.
+      if (busy()) return false;
       const selected = voice();
       if (!selected) { onError('לא נמצא קול עברי במכשיר. יש להתקין קול עברי בהגדרות הדיבור ולנסות שוב.'); return false; }
-      cancel();
       try {
         const utterance = new host.SpeechSynthesisUtterance(spokenText(text));
         utterance.voice = selected; utterance.lang = selected.lang; utterance.rate = 1;
-        current = utterance;
-        utterance.onend = () => { if(current === utterance) current = null; };
-        utterance.onerror = () => { if(current === utterance) { current = null; onError('הכריזה נכשלה. נסו להפעיל אותה שוב.'); } };
+        current = utterance; channel.active = utterance;
+        const finish = error => {
+          if (channel.active !== utterance) return;
+          current = null; channel.active = null; channel.readyAt = now() + 200;
+          if (error) onError('הכריזה נכשלה. נסו להפעיל אותה שוב.');
+        };
+        utterance.onend = () => finish(false);
+        utterance.onerror = () => finish(true);
         synth.speak(utterance); return true;
-      } catch (_) { current = null; onError('הכריזה אינה זמינה בדפדפן הזה.'); return false; }
+      } catch (_) {
+        if (channel.active === current) channel.active = null;
+        current = null; channel.readyAt = now() + 300;
+        onError('הכריזה אינה זמינה בדפדפן הזה.'); return false;
+      }
     }};
   }
   const api = {spokenText,instruction,stopLabel,tracker,create};

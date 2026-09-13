@@ -202,7 +202,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
   useEffectMS(() => {
-    if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible') return;
+    if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current || speech.current.busy()) return;
     const turnIndex = upcomingMv ? groupedManeuvers.findIndex(m => m.f === upcomingMv.f && m.kind === upcomingMv.kind) : -1;
     const segmentMeters = turnIndex >= 0 ? (upcomingMv.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
     const text = announcements.current.next(upcomingMv, driverF, metrics.total, segmentMeters);
