@@ -9,7 +9,7 @@ test('early and near announcements occur once, including a turn first seen at 10
  assert.match(t.next(m,.46,1000),/40 מטר/);
  assert.match(t.next(m,.48,1000),/20 מטר/);
  assert.equal(t.next(m,.485,1000),null);
- assert.match(t.next(m,.501,1000),/כעת, פנו ימינה/);
+ assert.match(t.next(m,.501,1000),/פנו ימינה/);
  assert.equal(t.next(m,.502,1000),null);
  t.reset();assert.ok(t.next(m,.4,1000));
 });
@@ -38,7 +38,7 @@ test('final approach is announced once at 20m or when first seen at 15m',()=>{
  const m={kind:'left',f:.5},t=tracker();
  assert.match(t.next(m,.45,1000),/50 מטר/);
  assert.equal(t.next(m,.485,1000),null);
- assert.match(t.next(m,.49,1000),/כעת, פנו שמאלה/);
+ assert.match(t.next(m,.49,1000),/פנו שמאלה/);
  assert.equal(t.next(m,.51,1000),null);
 });
 test('next station includes the platform and does not repeat or invent one',()=>{
@@ -54,14 +54,14 @@ test('next station includes the platform and does not repeat or invent one',()=>
 test('arrival has its own announcement after the 20m warning and never repeats',()=>{
  const t=tracker(),m={kind:'right',f:.5};
  assert.match(t.next(m,.48,1000),/20 מטר/);
- assert.match(t.next(m,.495,1000),/^כעת, פנו ימינה$/);
+ assert.match(t.next(m,.495,1000),/^פנו ימינה$/);
  assert.equal(t.next(m,.5,1000),null);
  assert.equal(t.next(m,.503,1000),null);
 });
 test('GPS crossing announces only a previously approached turn within 10m',()=>{
  const m={kind:'left',f:.5},t=tracker();
  t.next(m,.475,1000);
- assert.equal(t.next(m,.504,1000),'כעת, פנו שמאלה');
+ assert.equal(t.next(m,.504,1000),'פנו שמאלה');
  assert.equal(tracker().next(m,.504,1000),null);
  const late=tracker();late.next(m,.475,1000);assert.equal(late.next(m,.52,1000),null);
 });
@@ -79,12 +79,12 @@ test('short segment gets one advance cue plus arrival, without 50m or 20m repeat
  assert.match(t.next(m,.42,1000,80),/80 מטר/);
  assert.equal(t.next(m,.45,1000,80),null);
  assert.equal(t.next(m,.48,1000,80),null);
- assert.equal(t.next(m,.495,1000,80),'כעת, פנו ימינה');
+ assert.equal(t.next(m,.495,1000,80),'פנו ימינה');
  assert.equal(t.next(m,.5,1000,80),null);
  t.reset();assert.match(t.next(m,.42,1000,80),/80 מטר/);
 });
 test('long segment retains advance stages and starting at arrival speaks once',()=>{
  const t=tracker(),m={kind:'left',f:.5};
  assert.ok(t.next(m,.42,1000,200));assert.ok(t.next(m,.45,1000,200));assert.ok(t.next(m,.48,1000,200));
- const near=tracker();assert.equal(near.next(m,.495,1000,80),'כעת, פנו שמאלה');assert.equal(near.next(m,.499,1000,80),null);
+ const near=tracker();assert.equal(near.next(m,.495,1000,80),'פנו שמאלה');assert.equal(near.next(m,.499,1000,80),null);
 });

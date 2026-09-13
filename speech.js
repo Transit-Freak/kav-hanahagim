@@ -38,7 +38,7 @@
       const stage = meters <= 10.01 ? 4 : shortApproaches.has(key) ? 1 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
       if ((seen.get(key) || 0) >= stage) return null;
       seen.set(key, stage);
-      return (meters <= 10.01 ? 'כעת, ' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
+      return (meters <= 10.01 ? '' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
     }};
   }
   function create(host, onError) {
