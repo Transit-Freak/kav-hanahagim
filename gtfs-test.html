@@ -57,6 +57,8 @@
   <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
   <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
 
+  <script src="data.js?v=20260913d"></script>
+  <script src="navigation.js?v=20260913d"></script>
   <script src="gtfs.js"></script>
   <script src="geo.js"></script>
   <script src="osrm.js"></script>
@@ -93,7 +95,7 @@
 
     function App() {
       const [dark, setDark] = useState(false);
-      const [stage, setStage] = useState('idle');   // idle | parsing | done | error
+      const [stage, setStage] = useState('loading');   // loading | parsing | done | error
       const [prog, setProg] = useState({ phase: '', pct: 0, detail: '' });
       const [feed, setFeed] = useState(null);
       const [err, setErr] = useState('');
@@ -103,6 +105,10 @@
       const [sel, setSel] = useState(null);         // selected routeId
       const [view, setView] = useState(null);
       const [q, setQ] = useState('');
+      const [page, setPage] = useState(0);
+      const [routeErr, setRouteErr] = useState('');
+      const [routeAttempt, setRouteAttempt] = useState(0);
+      const sourceEpoch = useRef(0);
       const [driverF, setDriverF] = useState(0);
       const [speed, setSpeed] = useState(2);
       const speedRef = useRef(2);
@@ -127,84 +133,106 @@
 
       useEffect(() => { document.body.setAttribute('data-theme', dark ? 'dark' : 'light'); }, [dark]);
 
-      const run = async (buf, name) => {
-        setFileName(name); setStage('parsing'); setErr(''); setFeed(null); setView(null); setSel(null);
+      const beginSource = (stage, name) => {
+        const epoch = ++sourceEpoch.current;
+        setFileName(name); setStage(stage); setErr(''); setFeed(null); setView(null); setSel(null);
+        setRouteErr(''); setQ(''); setPage(0);
+        return epoch;
+      };
+      const loadRemote = async () => {
+        const epoch = beginSource('loading', 'נתוני הקווים המעודכנים');
+        const start = performance.now();
+        try {
+          const loaded = await window.NahagimData.loadIndex();
+          if (epoch !== sourceEpoch.current) return;
+          setFeed(loaded); setFileName(loaded.fileName); setElapsed(Math.round(performance.now() - start)); setStage('done');
+        } catch (e) {
+          if (epoch !== sourceEpoch.current) return;
+          setErr('טעינת הקווים נכשלה: ' + e.message); setStage('error');
+        }
+      };
+      useEffect(() => { loadRemote(); return () => { sourceEpoch.current++; }; }, []);
+
+      const run = async (getBuffer, name) => {
+        const epoch = beginSource('parsing', name);
         const start = performance.now(); setT0(start);
         try {
-          if (typeof DecompressionStream === 'undefined') throw new Error('הדפדפן לא תומך ב-DecompressionStream — נסה Chrome/Edge עדכני.');
-          const parsed = await window.GTFSParser.parseZip(buf, setProg);
+          const buf = await getBuffer();
+          if (epoch !== sourceEpoch.current) return;
+          if (typeof DecompressionStream === 'undefined') throw new Error('הדפדפן לא תומך בפענוח ZIP.');
+          const parsed = await window.GTFSParser.parseZip(buf, (p) => { if (epoch === sourceEpoch.current) setProg(p); });
+          if (epoch !== sourceEpoch.current) return;
           parsed.fileName = name;
-          setElapsed(Math.round(performance.now() - start));
-          setFeed(parsed); setStage('done');
-        } catch (e) { console.error(e); setErr(e.message || String(e)); setStage('error'); }
+          setElapsed(Math.round(performance.now() - start)); setFeed(parsed); setStage('done');
+        } catch (e) {
+          if (epoch !== sourceEpoch.current) return;
+          setErr(e.message || String(e)); setStage('error');
+        }
       };
+      const onFile = (e) => { const f = e.target.files && e.target.files[0]; if (f) run(() => f.arrayBuffer(), f.name); };
+      const loadSample = () => run(async () => {
+        const r = await fetch('sample-gtfs.zip');
+        if (!r.ok) throw new Error('טעינת הדוגמה נכשלה: HTTP ' + r.status);
+        return r.arrayBuffer();
+      }, 'sample-gtfs.zip (דוגמה)');
 
-      const onFile = async (e) => { const f = e.target.files && e.target.files[0]; if (f) run(await f.arrayBuffer(), f.name); };
-      const loadSample = async () => {
-        try {
-          const r = await fetch('sample-gtfs.zip');
-          const buf = await r.arrayBuffer();
-          run(buf, 'sample-gtfs.zip (דוגמה)');
-        } catch (e) { setErr('טעינת קובץ הדוגמה נכשלה: ' + e.message); setStage('error'); }
-      };
-
-      const pickRoute = (id) => {
-        setSel(id);
-        const v = window.GTFSParser.buildTripView(feed, id);
-        setView(v);
-      };
+      const pickRoute = (id) => { setView(null); setRouteErr(''); setSel(id); setRouteAttempt(n => n + 1); };
+      useEffect(() => {
+        if (!feed || sel == null) return;
+        let cancelled = false;
+        setView(null); setRouteErr('');
+        Promise.resolve().then(() => feed.remote
+          ? window.NahagimData.loadRoute(sel)
+          : window.GTFSParser.buildTripView(feed, sel)).then((v) => {
+            if (cancelled) return;
+            if (!v || !v.trip || !Array.isArray(v.trip.stops) || !Array.isArray(v.geom) || v.geom.length < 2)
+              throw new Error('אין מסלול תקין לקו שנבחר');
+            setView(v);
+          }).catch((e) => { if (!cancelled) setRouteErr(e.message || String(e)); });
+        return () => { cancelled = true; };
+      }, [feed, sel, routeAttempt]);
 
       const routes = feed ? feed.routes : [];
-      const matches = q ? routes.filter((r) => (r.shortName || '').includes(q) || (r.makat || '').includes(q) || (r.id || '').includes(q) || (r.longName || '').includes(q)) : routes;
-      const filtered = matches; // no cap — show every matching route
+      const matches = useMemo(() => q ? routes.filter((r) => [r.shortName, r.makat, r.id, r.longName].some(v => String(v || '').includes(q))) : routes, [routes, q]);
+      const filtered = matches.slice(page * 40, (page + 1) * 40);
+      const sampleStops = feed && feed.remote ? (view ? view.trip.stops.slice(0, 5).map(s => [s.id, s]) : [])
+        : feed ? [...feed.stops.entries()].slice(0, 5) : [];
 
       // live simulation read-outs (turn + distance to next stop)
       const simMetrics = useMemo(() => (view ? window.Geo.polylineMetrics(view.geom) : null), [view]);
       const simStops = view ? view.trip.stops : [];
       const simNext = simStops.find((s) => s.f > driverF) || simStops[simStops.length - 1];
       const simMeters = (simNext && simMetrics) ? Math.max(0, (simNext.f - driverF) * simMetrics.total) : 0;
-      const simTurn = (simNext && simMetrics) ? simMetrics.maneuverAt(simNext.f) : 'straight';
+      const simTurn = 'straight';
       const TurnIco = simTurn === 'right' ? IconTurnRight : simTurn === 'left' ? IconTurnLeft : IconStraight;
-      const turnLabel = simTurn === 'right' ? 'פנייה ימינה' : simTurn === 'left' ? 'פנייה שמאלה' : 'ישר';
+      const turnLabel = 'התחנה הבאה';
       const fmtM = (m) => m >= 1000 ? (m / 1000).toFixed(1) + ' ק״מ' : Math.round(m / 10) * 10 + ' מ׳';
-
-      // DEMO maneuver (geometry fallback): first notable turn -> roundabout cue.
-      const demoMv = useMemo(() => {
-        if (!simMetrics || simMetrics.pts.length < 3) return null;
-        for (let f = 0.06; f < 0.92; f += 0.015) {
-          const t = simMetrics.maneuverAt(f);
-          if (t !== 'straight') return { f, kind: 'roundabout', exit: 2, source: 'geo', text: 'בכיכר — צאו ביציאה השנייה' };
-        }
-        return null;
-      }, [simMetrics]);
 
       // LIVE OSRM maneuvers for the selected route (real turn-by-turn).
       const [osrmOn, setOsrmOn] = useState(true);
       const [osrmServer, setOsrmServer] = useState(window.OSRM.DEFAULT_SERVER);
       const [osrm, setOsrm] = useState({ status: 'idle' });
       useEffect(() => {
-        if (!view || !osrmOn) { setOsrm({ status: 'off' }); return; }
+        if (!view || feed?.remote || !osrmOn) { setOsrm({ status: 'off' }); return; }
         let cancelled = false;
         setOsrm({ status: 'loading' });
         window.OSRM.maneuvers(view.geom, { server: osrmServer }).then((res) => {
           if (cancelled) return;
           if (res.ok) setOsrm({ status: 'ok', maneuvers: res.maneuvers.map((m) => ({ ...m, source: 'osrm' })), dist: res.dist, shape: res.shape });
           else setOsrm({ status: 'fallback', reason: res.reason, dist: res.dist, shape: res.shape });
-        });
+        }).catch((e) => { if (!cancelled) setOsrm({ status: 'fallback', reason: e.message }); });
         return () => { cancelled = true; };
-      }, [view, osrmOn, osrmServer]);
+      }, [view, feed, osrmOn, osrmServer]);
 
-      // active maneuver source: live OSRM if available, else geometry demo
-      const mvSource = (osrmOn && osrm.status === 'ok') ? osrm.maneuvers : (demoMv ? [demoMv] : []);
-      const activeMv = mvSource
-        .map((mv) => ({ ...mv, meters: (mv.f - driverF) * (simMetrics ? simMetrics.total : 0) }))
-        .filter((mv) => mv.meters > -30 && mv.meters < 340)
-        .sort((a, b) => a.meters - b.meters)[0] || null;
-      const MvIco = activeMv ? (activeMv.kind === 'roundabout' ? IconRoundabout : activeMv.kind === 'right' ? IconTurnRight : activeMv.kind === 'left' ? IconTurnLeft : IconStraight) : IconStraight;
+      const mvSource = feed?.remote ? (view?.maneuvers || [])
+        : (osrmOn && osrm.status === 'ok' ? osrm.maneuvers : []);
+      const prepared = useMemo(() => window.RouteNavigation.prepare(mvSource), [mvSource]);
+      const activeMv = window.RouteNavigation.next(prepared, driverF, simMetrics ? simMetrics.total : 0);
+      const MvIco = activeMv ? (activeMv.kind === 'roundabout' ? IconRoundabout : activeMv.kind.endsWith('right') ? IconTurnRight : activeMv.kind.endsWith('left') ? IconTurnLeft : IconStraight) : IconStraight;
       const osrmBadge = osrm.status === 'ok' ? { t: `OSRM · ${osrm.maneuvers.length} הוראות`, c: 'var(--ok)' }
         : osrm.status === 'loading' ? { t: 'OSRM · טוען…', c: 'var(--mut)' }
-        : osrm.status === 'fallback' ? { t: osrm.reason === 'wander' ? 'OSRM · המסלול לא צמוד-כביש — זיהוי גיאומטרי' : 'OSRM · לא זמין — זיהוי גיאומטרי', c: 'var(--warn)' }
-        : osrm.status === 'off' ? { t: 'OSRM כבוי — זיהוי גיאומטרי', c: 'var(--mut)' } : null;
+        : osrm.status === 'fallback' ? { t: osrm.reason === 'wander' ? 'OSRM · המסלול אינו מתאים' : 'OSRM · הוראות לא זמינות', c: 'var(--warn)' }
+        : osrm.status === 'off' ? { t: 'OSRM כבוי', c: 'var(--mut)' } : null;
 
       return (
         <React.Fragment>
@@ -213,7 +241,7 @@
             <div style={{ width: 44, height: 44, borderRadius: 12, background: 'var(--accent)', color: 'var(--accent-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}><IconBus size={24} sw={2.2} /></div>
             <div>
               <div style={{ fontWeight: 800, fontSize: 21 }}>בדיקת מנוע GTFS</div>
-              <div style={{ fontSize: 13, color: 'var(--mut)' }}>קו הנהגים · כלי פנימי לאימות קריאת הקובץ</div>
+              <div style={{ fontSize: 13, color: 'var(--mut)' }}>קו הנהגים · בדיקת מסלולים ונתוני GTFS</div>
             </div>
             <div style={{ marginInlineStart: 'auto', display: 'flex', alignItems: 'center', gap: 12 }}>
               <button onClick={() => setDark((d) => !d)} aria-label="יום/לילה" style={{ width: 40, height: 40, borderRadius: 11, border: '1px solid var(--hair)', background: 'var(--panel2)', color: 'var(--text)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
@@ -223,16 +251,19 @@
             </div>
           </div>
 
+          <p style={{ color: 'var(--mut)' }}>הקווים נטענים אוטומטית, כמו באפליקציית הנהג. חפש קו ובחר אותו להצגת המסלול והתחנות.</p>
           {/* controls */}
           <div style={{ display: 'flex', gap: 12, marginTop: 20, flexWrap: 'wrap' }}>
             <label style={{ display: 'inline-flex', alignItems: 'center', gap: 9, background: 'var(--accent)', color: 'var(--accent-ink)', fontWeight: 800, fontSize: 15, padding: '12px 20px', borderRadius: 12, cursor: 'pointer' }}>
               <IconUpload size={19} sw={2.2} /> טען קובץ GTFS (ZIP)
               <input type="file" onChange={onFile} style={{ position: 'absolute', width: 1, height: 1, opacity: 0, pointerEvents: 'none' }} />
             </label>
+            <button onClick={loadRemote} style={{ padding: '12px 20px', borderRadius: 12, cursor: 'pointer', background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--hair)', fontFamily: 'inherit', fontWeight: 700 }}>טען קווים מעודכנים</button>
             <button onClick={loadSample} style={{ background: 'var(--panel2)', color: 'var(--text)', border: '1px solid var(--hair)', fontFamily: 'inherit', fontWeight: 700, fontSize: 15, padding: '12px 20px', borderRadius: 12, cursor: 'pointer' }}>טען קובץ דוגמה</button>
             <a href="app.html" style={{ marginInlineStart: 'auto', display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--mut)', textDecoration: 'none', fontSize: 14, fontWeight: 600, alignSelf: 'center' }}>← לאפליקציית הנהג</a>
           </div>
 
+          {stage === 'loading' && <Panel title="טוען קווים מעודכנים…"><div role="status">מוריד את רשימת הקווים. אין צורך להעלות קובץ.</div></Panel>}
           {/* parsing */}
           {stage === 'parsing' && (
             <Panel title="מפענח…">
@@ -266,14 +297,14 @@
                 <IconCheck size={20} sw={2.4} /> נקרא בהצלחה — {fileName} · {elapsed} מ״ש
               </div>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit,minmax(150px,1fr))', gap: 12, marginTop: 14 }}>
-                <Stat label="מפעילים (agency)" value={fmt(feed.counts.agencies)} />
+                <Stat label="מפעילים (agency)" value={feed.remote ? fmt(new Set(feed.routes.map(r => r.agency)).size) : fmt(feed.counts.agencies)} />
                 <Stat label="קווים (routes)" value={fmt(feed.counts.routes)} tone="var(--accent)" />
                 <Stat label="תחנות (stops)" value={fmt(feed.counts.stops)} />
                 <Stat label="נסיעות (trips)" value={fmt(feed.counts.trips)} />
-                <Stat label="שורות stop_times" value={fmt(feed.counts.stopTimes)} />
-                <Stat label="נקודות shapes" value={fmt(feed.counts.shapes)} />
+                {!feed.remote && <Stat label="שורות stop_times" value={fmt(feed.counts.stopTimes)} />}
+                {!feed.remote && <Stat label="נקודות shapes" value={fmt(feed.counts.shapes)} />}
               </div>
-              {feed.caps.shapeCapped && (
+              {feed.caps?.shapeCapped && (
                 <div style={{ marginTop: 12, fontSize: 13, color: 'var(--warn)', background: 'var(--warn-soft)', padding: '10px 14px', borderRadius: 10 }}>
                   הקובץ חרג ממגבלת הזיכרון של הדפדפן ({fmt(20000000)} נקודות צורה). נתון נדיר — נסה במחשב עם יותר זיכרון.
                 </div>
@@ -281,7 +312,7 @@
 
               {/* sample tables */}
               <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 18, marginTop: 4, alignItems: 'start' }}>
-                <Panel title="דוגמת routes.txt" right={<span style={{ fontSize: 12, color: 'var(--dim)' }}>5 ראשונים</span>}>
+                <Panel title={feed.remote ? "דוגמת הקווים המוכנים" : "דוגמת routes.txt"} right={<span style={{ fontSize: 12, color: 'var(--dim)' }}>5 ראשונים</span>}>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead><tr><Th w="64">מק״ט</Th><Th w="56">route_id</Th><Th>קצר</Th><Th>מפעיל</Th><Th>שם ארוך</Th></tr></thead>
@@ -291,11 +322,11 @@
                     </table>
                   </div>
                 </Panel>
-                <Panel title="דוגמת stops.txt" right={<span style={{ fontSize: 12, color: 'var(--dim)' }}>5 ראשונות</span>}>
+                <Panel title={feed.remote ? "תחנות מהקו הנבחר" : "דוגמת stops.txt"} right={<span style={{ fontSize: 12, color: 'var(--dim)' }}>5 ראשונות</span>}>
                   <div style={{ overflowX: 'auto' }}>
                     <table style={{ width: '100%', borderCollapse: 'collapse' }}>
                       <thead><tr><Th w="70">stop_id</Th><Th>קוד</Th><Th>שם</Th><Th>lat,lon</Th></tr></thead>
-                      <tbody>{[...feed.stops.entries()].slice(0, 5).map(([id, s]) => (
+                      <tbody>{sampleStops.map(([id, s]) => (
                         <tr key={id}><Td mono>{id}</Td><Td mono>{s.code}</Td><Td>{s.name}</Td><Td mono>{isFinite(s.lat) ? s.lat.toFixed(4) + ',' + s.lon.toFixed(4) : '—'}</Td></tr>
                       ))}</tbody>
                     </table>
@@ -305,16 +336,17 @@
 
               {/* route preview */}
               <Panel title="תצוגת מסלול שנבנה מהנתונים" right={
-                <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="חיפוש קו / מק״ט…"
+                <input aria-label="חיפוש קו או מק״ט" value={q} onChange={(e) => { setQ(e.target.value); setPage(0); }} placeholder="חיפוש קו / מק״ט…"
                   style={{ background: 'var(--panel2)', border: '1px solid var(--hair)', color: 'var(--text)', fontFamily: 'inherit', fontSize: 14, padding: '8px 12px', borderRadius: 10, width: 200, outline: 'none' }} />
               }>
                 <div style={{ display: 'grid', gridTemplateColumns: '280px 1fr 1fr', gap: 16, alignItems: 'start' }}>
                   {/* route list */}
                   <div>
                     <div style={{ fontSize: 12.5, color: 'var(--mut)', fontWeight: 700, marginBottom: 6 }}>
-                      {fmt(filtered.length)} {q ? 'תוצאות' : 'קווים'} · הכל מוצג
+                      {fmt(matches.length)} {q ? 'תוצאות' : 'קווים'} · מוצגים {fmt(filtered.length)}
                     </div>
                     <div style={{ maxHeight: 432, overflowY: 'auto', display: 'flex', flexDirection: 'column', gap: 6, paddingInlineEnd: 4 }}>
+                      {matches.length > 40 && <div style={{ display: 'flex', gap: 8 }}><button disabled={page === 0} onClick={() => setPage(p => p - 1)}>הקודם</button><span>עמוד {page + 1} מתוך {Math.ceil(matches.length / 40)}</span><button disabled={(page + 1) * 40 >= matches.length} onClick={() => setPage(p => p + 1)}>הבא</button></div>}
                       {filtered.map((r) => (
                         <button key={r.id} onClick={() => pickRoute(r.id)} style={{
                           display: 'flex', alignItems: 'center', gap: 10, textAlign: 'inherit', cursor: 'pointer',
@@ -332,7 +364,7 @@
                   <div>
                     <div style={{ position: 'relative', aspectRatio: '390/560', maxHeight: 432, borderRadius: 14, overflow: 'hidden', border: '1px solid var(--hair)', background: 'var(--panel2)' }}>
                       {view ? <LeafletMap geom={view.geom} stops={view.trip.stops} driverF={driverF} dark={dark} follow={false} /> :
-                        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dim)', fontSize: 14 }}>בחר קו לתצוגה</div>}
+                        <div style={{ height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--dim)', fontSize: 14 }}>{routeErr || (sel != null ? 'טוען את הקו…' : 'בחר קו לתצוגה')}</div>}
                       {view && simNext && (
                         <div style={{ position: 'absolute', top: 10, insetInlineStart: 54, insetInlineEnd: 10, zIndex: 500, background: activeMv ? (activeMv.kind === 'roundabout' ? '#0E4FC4' : 'var(--accent)') : 'var(--accent)', color: '#fff', borderRadius: 12, padding: '10px 13px', boxShadow: '0 4px 14px rgba(0,0,0,0.3)' }}>
                           {activeMv ? (
@@ -345,7 +377,7 @@
                                   <div style={{ fontSize: 12, opacity: 0.9, fontWeight: 700 }}>בעוד {fmtM(Math.max(0, activeMv.meters))}</div>
                                   <div style={{ fontSize: 15, fontWeight: 800, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{activeMv.text}</div>
                                 </div>
-                                <div style={{ fontSize: 10, fontWeight: 800, flexShrink: 0, padding: '3px 7px', borderRadius: 99, background: 'rgba(255,255,255,0.2)' }}>{activeMv.source === 'osrm' ? 'OSRM' : 'הדמיה'}</div>
+                                <div style={{ fontSize: 10, fontWeight: 800, flexShrink: 0, padding: '3px 7px', borderRadius: 99, background: 'rgba(255,255,255,0.2)' }}>{feed?.remote ? 'נתונים מוכנים' : 'OSRM'}</div>
                               </div>
                             </React.Fragment>
                           ) : (
@@ -379,8 +411,9 @@
                         </div>
                       </div>
                     )}
+                    {view && feed?.remote && <div style={{ marginTop: 10, color: 'var(--mut)', fontSize: 13 }}>הוראות מהנתונים המוכנים · {view.nav?.status === 'ok' ? 'הוראות זמינות' : view.nav?.status === 'weak' ? 'איכות חלקית' : 'אין הוראות פנייה'} · עודכן {feed.built}</div>}
                     {/* OSRM live navigation */}
-                    {view && (
+                    {view && !feed?.remote && (
                       <div style={{ marginTop: 10, background: 'var(--panel)', border: '1px solid var(--hair)', borderRadius: 12, padding: '11px 12px' }}>
                         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                           <span style={{ fontSize: 13, fontWeight: 800 }}>ניווט אמיתי · OSRM</span>
@@ -392,7 +425,7 @@
                         <input value={osrmServer} onChange={(e) => setOsrmServer(e.target.value)} spellCheck={false}
                           style={{ width: '100%', marginTop: 9, background: 'var(--panel2)', border: '1px solid var(--hair)', color: 'var(--text)', fontFamily: 'var(--mono)', fontSize: 11.5, padding: '7px 9px', borderRadius: 8, outline: 'none', direction: 'ltr', textAlign: 'left' }} />
                         <div style={{ fontSize: 11, color: 'var(--dim)', marginTop: 7, lineHeight: 1.5 }}>
-                          על shape אמיתי מ-GTFS — מחזיר הוראות פנייה אמיתיות כולל מספרי יציאה בכיכר. בקוֹבץ דמה סינתטי לא צמוד-כביש המערכת נופלת לזיהוי גיאומטרי. לפרודקשן: שרת OSRM עצמאי.
+                          בדיקת ניתוב חיה לקובץ שהועלה ידנית. אם הניתוב אינו זמין, יוצגו התחנות ללא ניחוש הוראות פנייה.
                         </div>
                       </div>
                     )}
