@@ -1,7 +1,7 @@
 // Central driving screen — real map (Leaflet) with the route, stops and a live driver puck.
 const { useState: useStateMS, useEffect: useEffectMS, useRef: useRefMS, useMemo: useMemoMS } = React;
 
-function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
+function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus, gpsEnabled = false }) {
   const statusColor = osrmStatus === 'ok' ? 'var(--ok)' : (osrmStatus === 'loading' || osrmStatus === 'weak') ? 'var(--warn)' : 'var(--text-dim)';
   const statusLabel = osrmStatus === 'ok' ? 'הוראות נהיגה' : osrmStatus === 'weak' ? 'הוראות חלקיות' : osrmStatus === 'loading' ? 'טוען ניווט…' : osrmStatus === 'fallback' ? 'אין הוראות פנייה' : '';
   return (
@@ -19,7 +19,7 @@ function TripHeader({ route, trip, dark, onToggleDark, onBack, osrmStatus }) {
         </div>
         <div style={{ fontSize: 12.5, color: 'var(--text-mut)', display: 'flex', gap: 8, marginTop: 1, alignItems: 'center' }}>
           <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4 }}>
-            <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />תצוגה מקדימה
+            <span style={{ width: 7, height: 7, borderRadius: 99, background: 'var(--ok)' }} />{gpsEnabled ? 'מעקב GPS' : 'תצוגה מקדימה'}
           </span>
           <span>· יציאה {trip.departure}</span>
           {statusLabel ? <span style={{ color: statusColor, fontWeight: 700 }}>· {statusLabel}</span> : null}
@@ -65,6 +65,8 @@ function ManeuverBanner({ mv }) {
 function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
   const [playing, setPlaying] = useStateMS(false);
+  const [gpsEnabled, setGpsEnabled] = useStateMS(false);
+  const [gpsStatus, setGpsStatus] = useStateMS('off');
   const [screenEnabled, setScreenEnabled] = useStateMS(true);
   const [screenStatus, setScreenStatus] = useStateMS('requesting');
   const wakeLock = useRefMS(null);
@@ -94,7 +96,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const toggleVoice = () => {
     if (voiceEnabled) { speech.current.cancel(); setVoiceEnabled(false); setVoiceMessage(''); return; }
     if (!speech.current?.supported) { setVoiceMessage('הדפדפן אינו תומך בכריזה.'); return; }
-    if (speech.current.speak('כריזת פניות הופעלה')) { setVoiceEnabled(true); setVoiceMessage('כריזה בעברית בזמן ההדמיה'); }
+    if (speech.current.speak('כריזת פניות הופעלה')) { setVoiceEnabled(true); setVoiceMessage('כריזה בעברית לפי התקדמות המסלול'); }
   };
   const seek = f => { speech.current?.cancel(); announcements.current.reset(); setPlaying(false); setDriverF(f); };
   const focusTimer = useRefMS(null);
@@ -108,6 +110,34 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
   const stops = trip.stops;
   const metrics = useMemoMS(() => window.Geo.polylineMetrics(geom || []), [geom]);
+  useEffectMS(() => {
+    if (!gpsEnabled) { setGpsStatus('off'); return; }
+    if (!navigator.geolocation) { setGpsStatus('unsupported'); return; }
+    let live = true, timer;
+    const tracker = window.RouteGPS.tracker(metrics);
+    setGpsStatus('waiting');
+    const stale = () => { if (live) { setGpsStatus('stale'); speech.current?.cancel(); } };
+    timer = setTimeout(stale, 15000);
+    let watch;
+    try {
+      watch = navigator.geolocation.watchPosition(position => {
+        if (!live) return;
+        const result = tracker.next(position);
+        setGpsStatus(result.status);
+        if (result.status === 'active') {
+          setDriverF(result.f); clearTimeout(timer); timer = setTimeout(stale, 15000);
+        } else speech.current?.cancel();
+      }, error => {
+        if (!live) return;
+        setGpsStatus(error.code === 1 ? 'denied' : 'unavailable'); speech.current?.cancel();
+      }, {enableHighAccuracy:true, maximumAge:0, timeout:15000});
+    } catch (_) { setGpsStatus('unavailable'); }
+    return () => { live = false; clearTimeout(timer); if (watch !== undefined) navigator.geolocation.clearWatch(watch); speech.current?.cancel(); };
+  }, [gpsEnabled, metrics]);
+  const toggleGps = () => {
+    speech.current?.cancel(); announcements.current.reset(); setPlaying(false);
+    setGpsStatus(gpsEnabled ? 'off' : 'waiting'); setGpsEnabled(value => !value);
+  };
 
   // הוראות מוכנות מהשרת, או (בקובץ שהועלה ידנית) קריאה חיה ל-OSRM
   useEffectMS(() => {
@@ -163,13 +193,13 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const groupedManeuvers = useMemoMS(
     () => window.RouteNavigation.prepare(activeManeuvers, metrics.total),
     [activeManeuvers, metrics.total]);
-  const upcomingMv = window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
+  const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
   useEffectMS(() => {
-    if (!voiceEnabled || !playing) return;
+    if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible') return;
     const text = announcements.current.next(upcomingMv, driverF, metrics.total);
     if (text) speech.current?.speak(text);
-  }, [voiceEnabled, playing, driverF, groupedManeuvers, metrics.total]);
+  }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total]);
 
   useEffectMS(() => { if (!playing) speech.current?.cancel(); }, [playing]);
 
@@ -180,17 +210,19 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} />
+      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} gpsEnabled={gpsEnabled} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--surface)', color: 'var(--text)' }}>
-        <button onClick={() => { if (driverF >= 1) { announcements.current.reset(); setDriverF(0); } setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer' }}>
+        <button disabled={gpsEnabled} onClick={() => { if (driverF >= 1) { announcements.current.reset(); setDriverF(0); } setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: gpsEnabled ? .5 : 1 }}>
           {playing ? 'השהיית הדמיה' : 'הפעלת הדמיה'}
         </button>
-        <input aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { seek(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
-        <span style={{ fontSize: 12 }}>ללא GPS</span>
+        <input disabled={gpsEnabled} aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { seek(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
+        <span style={{ fontSize: 12 }}>{gpsEnabled ? 'GPS' : 'הדמיה'}</span>
       </div>
       <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 8, padding: '4px 14px 8px', background: 'var(--surface)', color: 'var(--text)' }}>
         <button aria-pressed={screenEnabled} onClick={toggleScreen} style={{ border: '1px solid var(--hair)', borderRadius: 10, padding: '8px 12px', background: 'var(--chip)', color: 'var(--text)', cursor: 'pointer' }}>{screenEnabled ? 'כיבוי שמירת מסך' : 'השארת מסך דולק'}</button>
         <button aria-pressed={voiceEnabled} onClick={toggleVoice} style={{ border: '1px solid var(--hair)', borderRadius: 10, padding: '8px 12px', background: 'var(--chip)', color: 'var(--text)', cursor: 'pointer' }}>{voiceEnabled ? 'כיבוי כריזה' : 'הפעלת כריזה'}</button>
+        <button aria-pressed={gpsEnabled} onClick={toggleGps} style={{ border: '1px solid var(--hair)', borderRadius: 10, padding: '8px 12px', background: 'var(--chip)', color: 'var(--text)', cursor: 'pointer' }}>{gpsEnabled ? 'עצירת GPS' : 'הפעלת GPS'}</button>
+        {gpsEnabled && <span role="status" style={{ fontSize: 12, width: '100%' }}>{({waiting:'ממתין למיקום מהמכשיר…',active:'GPS פעיל · המיקום מותאם לקו',inaccurate:'המיקום אינו מדויק מספיק · ההוראות מושהות',stale:'המיקום לא עודכן · ההוראות מושהות',offroute:'המיקום אינו תואם להמשך הקו · ההוראות מושהות',ambiguous:'לא ברור באיזה חלק של הקו נמצאים · ההוראות מושהות',denied:'הרשאת המיקום נדחתה. אפשר לשנות בהגדרות האתר ולנסות שוב.',unsupported:'הדפדפן אינו תומך במיקום',unavailable:'לא התקבל מיקום. בדקו ששירותי המיקום מופעלים.'})[gpsStatus]}</span>}
         <span role="status" style={{ fontSize: 12, width: '100%' }}>{({active:'שמירת מסך פעילה',requesting:'מפעיל שמירת מסך…',off:'שמירת מסך כבויה',unsupported:'הדפדפן אינו תומך בשמירת מסך',unavailable:'שמירת המסך לא הופעלה במכשיר',released:'שמירת המסך הופסקה במכשיר'})[screenStatus]}</span>
         <span role="status" style={{ fontSize: 12, flex: 1 }}>{voiceMessage}</span>
       </div>
