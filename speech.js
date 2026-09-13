@@ -1,6 +1,9 @@
 // Hebrew speech for prepared instructions. No directions are inferred from geometry.
 (function(root) {
   const directions = {left:'פנו שמאלה',right:'פנו ימינה','keep-left':'היצמדו לשמאל','keep-right':'היצמדו לימין'};
+  function spokenText(text) {
+    return String(text).replace(/(^|[\s/·,:()])שד(?:[׳’'.])?(?=$|[\s/·,:()])/g, '$1שדרות');
+  }
   function instruction(m) {
     if (!m) return '';
     if (m.kind === 'roundabout') return Number.isInteger(m.exit) && m.exit > 0
@@ -25,12 +28,15 @@
     }, next(m, f, total) {
       if (!m || !Number.isFinite(f) || !Number.isFinite(total) || total <= 0) return null;
       const meters = (m.f - f) * total;
-      if (!Number.isFinite(meters) || meters < 0 || meters > 300 || !instruction(m)) return null;
+      if (!Number.isFinite(meters) || meters < -10 || meters > 300 || !instruction(m)) return null;
       const key = JSON.stringify([m.f,m.kind,m.exit,m.then]);
-      const stage = meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
+      // A small crossing between GPS samples may skip the exact junction.
+      // Only finish a previously observed approach, never announce an old turn on startup.
+      if (meters < 0 && !seen.has(key)) return null;
+      const stage = meters <= 10.01 ? 4 : meters <= 20.01 ? 3 : meters <= 50 ? 2 : 1;
       if ((seen.get(key) || 0) >= stage) return null;
       seen.set(key, stage);
-      return (meters <= 10 ? 'כעת, ' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
+      return (meters <= 10.01 ? 'כעת, ' : `בעוד ${Math.max(10,Math.round(meters/10)*10)} מטר, `) + instruction(m);
     }};
   }
   function create(host, onError) {
@@ -44,7 +50,7 @@
       if (!selected) { onError('לא נמצא קול עברי במכשיר. יש להתקין קול עברי בהגדרות הדיבור ולנסות שוב.'); return false; }
       cancel();
       try {
-        const utterance = new host.SpeechSynthesisUtterance(text);
+        const utterance = new host.SpeechSynthesisUtterance(spokenText(text));
         utterance.voice = selected; utterance.lang = selected.lang; utterance.rate = 1;
         current = utterance;
         utterance.onend = () => { if(current === utterance) current = null; };
@@ -53,7 +59,7 @@
       } catch (_) { current = null; onError('הכריזה אינה זמינה בדפדפן הזה.'); return false; }
     }};
   }
-  const api = {instruction,stopLabel,tracker,create};
+  const api = {spokenText,instruction,stopLabel,tracker,create};
   if(typeof module !== 'undefined' && module.exports) module.exports = api;
   else root.RouteSpeech = api;
 })(typeof window === 'undefined' ? {} : window);

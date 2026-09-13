@@ -9,7 +9,8 @@ test('early and near announcements occur once, including a turn first seen at 10
  assert.match(t.next(m,.46,1000),/40 מטר/);
  assert.match(t.next(m,.48,1000),/20 מטר/);
  assert.equal(t.next(m,.485,1000),null);
- assert.equal(t.next(m,.501,1000),null);
+ assert.match(t.next(m,.501,1000),/כעת, פנו ימינה/);
+ assert.equal(t.next(m,.502,1000),null);
  t.reset();assert.ok(t.next(m,.4,1000));
 });
 test('starting near skips the obsolete early stage and another turn is independent',()=>{
@@ -37,7 +38,7 @@ test('final approach is announced once at 20m or when first seen at 15m',()=>{
  const m={kind:'left',f:.5},t=tracker();
  assert.match(t.next(m,.45,1000),/50 מטר/);
  assert.match(t.next(m,.485,1000),/20 מטר/);
- assert.equal(t.next(m,.49,1000),null);
+ assert.match(t.next(m,.49,1000),/כעת, פנו שמאלה/);
  assert.equal(t.next(m,.51,1000),null);
 });
 test('next station includes the platform and does not repeat or invent one',()=>{
@@ -49,4 +50,27 @@ test('next station includes the platform and does not repeat or invent one',()=>
  assert.equal(stopLabel({name:'תחנה מרכזית',code:'12345'}),'תחנה מרכזית');
  assert.ok(t.nextStop({...stop,seq:8,f:.9},.6));
  t.reset();assert.ok(t.nextStop(stop,.2));assert.equal(t.nextStop(stop,.6),null);
+});
+test('arrival has its own announcement after the 20m warning and never repeats',()=>{
+ const t=tracker(),m={kind:'right',f:.5};
+ assert.match(t.next(m,.48,1000),/20 מטר/);
+ assert.match(t.next(m,.495,1000),/^כעת, פנו ימינה$/);
+ assert.equal(t.next(m,.5,1000),null);
+ assert.equal(t.next(m,.503,1000),null);
+});
+test('GPS crossing announces only a previously approached turn within 10m',()=>{
+ const m={kind:'left',f:.5},t=tracker();
+ t.next(m,.475,1000);
+ assert.equal(t.next(m,.504,1000),'כעת, פנו שמאלה');
+ assert.equal(tracker().next(m,.504,1000),null);
+ const late=tracker();late.next(m,.475,1000);assert.equal(late.next(m,.52,1000),null);
+});
+test('Hebrew boulevard abbreviations are expanded only as whole tokens',()=>{
+ const {spokenText}=require('../speech.js');
+ for(const word of ['שד','שד\u05f3',"שד'",'שד.','שד’']) assert.equal(spokenText('התחנה הבאה: '+word+' הרצל'),'התחנה הבאה: שדרות הרצל');
+ assert.equal(spokenText('הרצל/שד׳ ירושלים'),'הרצל/שדרות ירושלים');
+ assert.equal(spokenText('אשדוד שדה שדרות'),'אשדוד שדה שדרות');
+ let utterance;
+ const c=create({SpeechSynthesisUtterance:class{constructor(t){this.text=t;}},speechSynthesis:{getVoices:()=>[{lang:'he-IL'}],speak:u=>utterance=u,cancel(){}}},()=>{});
+ c.speak('שד׳ הרצל');assert.equal(utterance.text,'שדרות הרצל');
 });
