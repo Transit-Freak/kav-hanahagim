@@ -7,7 +7,8 @@ test('early and near announcements occur once, including a turn first seen at 10
  assert.match(t.next(m,.4,1000),/100 מטר.*ימינה/);
  for(let f=.401;f<.449;f+=.001) assert.equal(t.next(m,f,1000),null);
  assert.match(t.next(m,.46,1000),/40 מטר/);
- assert.equal(t.next(m,.48,1000),null);
+ assert.match(t.next(m,.48,1000),/20 מטר/);
+ assert.equal(t.next(m,.485,1000),null);
  assert.equal(t.next(m,.501,1000),null);
  t.reset();assert.ok(t.next(m,.4,1000));
 });
@@ -31,4 +32,21 @@ test('speech chooses Hebrew, replaces pending speech, cancels, and reports missi
  voices=[{lang:'he-IL'}];assert.equal(c.speak('ד'),true);
  calls.at(-1).onerror();assert.equal(errors.length,2);
  assert.equal(create({},()=>{}).supported,false);
+});
+test('final approach is announced once at 20m or when first seen at 15m',()=>{
+ const m={kind:'left',f:.5},t=tracker();
+ assert.match(t.next(m,.45,1000),/50 מטר/);
+ assert.match(t.next(m,.485,1000),/20 מטר/);
+ assert.equal(t.next(m,.49,1000),null);
+ assert.equal(t.next(m,.51,1000),null);
+});
+test('next station includes the platform and does not repeat or invent one',()=>{
+ const {stopLabel}=require('../speech.js'),t=tracker();
+ const stop={id:'1',seq:2,f:.5,name:'תחנה מרכזית',platform:'4'};
+ assert.equal(t.nextStop(stop,.2),'התחנה הבאה: תחנה מרכזית · רציף 4');
+ assert.equal(t.nextStop(stop,.3),null);
+ assert.equal(stopLabel({name:'תחנה מרכזית/רציף 4',platform:'4'}),'תחנה מרכזית/רציף 4');
+ assert.equal(stopLabel({name:'תחנה מרכזית',code:'12345'}),'תחנה מרכזית');
+ assert.ok(t.nextStop({...stop,seq:8,f:.9},.6));
+ t.reset();assert.ok(t.nextStop(stop,.2));assert.equal(t.nextStop(stop,.6),null);
 });

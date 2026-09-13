@@ -81,6 +81,12 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     setScreenEnabled(enabled); wakeLock.current?.setEnabled(enabled);
   };
   const [voiceEnabled, setVoiceEnabled] = useStateMS(false);
+  const [speechTick, setSpeechTick] = useStateMS(0);
+  useEffectMS(() => {
+    if (!voiceEnabled) return;
+    const timer = setInterval(() => setSpeechTick(t => t + 1), 1000);
+    return () => clearInterval(timer);
+  }, [voiceEnabled]);
   const [voiceMessage, setVoiceMessage] = useStateMS('');
   const speech = useRefMS(null);
   const announcements = useRefMS(null);
@@ -199,7 +205,11 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible') return;
     const text = announcements.current.next(upcomingMv, driverF, metrics.total);
     if (text) speech.current?.speak(text);
-  }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total]);
+    else if (!speech.current?.busy() && (!upcomingMv || upcomingMv.meters > 100)) {
+      const stopText = announcements.current.nextStop(nextStop, driverF);
+      if (stopText) speech.current?.speak(stopText);
+    }
+  }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total, speechTick, nextStop]);
 
   useEffectMS(() => { if (!playing) speech.current?.cancel(); }, [playing]);
 
@@ -234,7 +244,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
           {upcomingMv
             ? <div><ManeuverBanner mv={upcomingMv} />
                 {nextStop && <div style={{ marginTop: 6, padding: '10px 14px', borderRadius: 12, background: 'var(--surface)', color: 'var(--text)', fontSize: 14, fontWeight: 700 }}>
-                  התחנה הבאה: {nextStop.name} · {fmtDist(metersToNext)}
+                  התחנה הבאה: {window.RouteSpeech.stopLabel(nextStop)} · {fmtDist(metersToNext)}
                 </div>}
               </div>
             : <NextStopBanner

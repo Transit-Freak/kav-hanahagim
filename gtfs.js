@@ -202,6 +202,7 @@
       feed.stops.set(id, {
         name: r.stop_name || '',
         code: r.stop_code || '',
+        platform: r.platform_code || '',
         lat: parseFloat(r.stop_lat), lon: parseFloat(r.stop_lon),
       });
     }
@@ -275,7 +276,7 @@
     // resolve stop coordinates + names
     let stops = stRows.map((st, i) => {
       const s = feed.stops.get(st.stopId) || {};
-      return { id: st.stopId, seq: i + 1, name: s.name || st.stopId, code: s.code || '', lat: s.lat, lon: s.lon, time: hm(st.arr) };
+      return { id: st.stopId, seq: i + 1, name: s.name || st.stopId, code: s.code || '', platform: s.platform || '', lat: s.lat, lon: s.lon, time: hm(st.arr) };
     });
 
     // geometry: prefer shapes.txt (flat [lat,lon,…]); fall back to stop coords

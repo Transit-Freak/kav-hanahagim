@@ -121,7 +121,7 @@ function NextStopBanner({ stop, driverF, meters, metersToTurn, dark, compact, ma
         <IconPin size={18} sw={2.2} style={{ opacity: 0.9, flexShrink: 0 }} />
         <div style={{ minWidth: 0, flex: 1 }}>
           <div style={{ fontSize: 11.5, fontWeight: 700, opacity: 0.8, letterSpacing: '0.02em' }}>התחנה הבאה · {fmtDist(mStop)}</div>
-          <div style={{ fontSize: compact ? 19 : 22, fontWeight: 800, lineHeight: 1.15, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{stop.name}</div>
+          <div style={{ fontSize: compact ? 19 : 22, fontWeight: 800, lineHeight: 1.15, overflowWrap: 'anywhere' }}>{window.RouteSpeech ? window.RouteSpeech.stopLabel(stop) : stop.name}</div>
         </div>
         <div style={{ textAlign: 'center', flexShrink: 0, opacity: 0.92 }}>
           <div style={{ fontSize: 16, fontWeight: 800, fontVariantNumeric: 'tabular-nums' }}>{stop.time}</div>
