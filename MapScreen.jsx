@@ -62,7 +62,7 @@ function ManeuverBanner({ mv }) {
 }
 
 // navSource: 'ok' | 'weak' | 'none' כשההוראות הגיעו מוכנות מהשרת (data.js) — אז אין קריאה חיה ל-OSRM.
-function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, dark, onToggleDark, onBack, startF = 0, animate = true }) {
+function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource, uncertainSegments = [], dark, onToggleDark, onBack, startF = 0, animate = true }) {
   const [driverF, setDriverF] = useStateMS(startF);
   const [playing, setPlaying] = useStateMS(false);
   const [gpsEnabled, setGpsEnabled] = useStateMS(false);
@@ -105,7 +105,9 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     if (!speech.current?.supported) { setVoiceMessage('הדפדפן אינו תומך בכריזה.'); return; }
     if (speech.current.speak('כריזת פניות הופעלה')) { setVoiceEnabled(true); setVoiceMessage('כריזה בעברית לפי התקדמות המסלול'); }
   };
-  const seek = f => { speech.current?.cancel(); announcements.current.reset(); setPlaying(false); setDriverF(f); };
+  const warnedSegments = useRefMS(new Set());
+  const wasCoverageBlocked = useRefMS(false);
+  const seek = f => { warnedSegments.current.clear(); speech.current?.cancel(); announcements.current.reset(); setPlaying(false); setDriverF(f); };
   const focusTimer = useRefMS(null);
   useEffectMS(() => () => clearTimeout(focusTimer.current), []);
   const [focus, setFocus] = useStateMS(null);
@@ -206,11 +208,23 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const groupedManeuvers = useMemoMS(
     () => window.RouteNavigation.prepare(activeManeuvers, metrics.total, {metrics, stops}),
     [activeManeuvers, metrics, stops]);
-  const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
+  const coverageIntervals = useMemoMS(() => window.RouteCoverage.intervals(uncertainSegments, metrics, geom, stops), [uncertainSegments, metrics, geom, stops]);
+  const coverage = window.RouteCoverage.state(coverageIntervals, driverF, metrics.total, gpsEnabled ? gpsSpeed.current : 30/3.6);
+  const visibleManeuvers = window.RouteCoverage.visible(groupedManeuvers, coverage);
+  const stopBeyondGap = !!coverage.gap && nextStop?.f >= coverage.gap.from;
+  useEffectMS(() => {
+    if (coverage.blocked && !wasCoverageBlocked.current) speech.current?.cancel();
+    wasCoverageBlocked.current = coverage.blocked;
+  }, [coverage.blocked]);
+  const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(visibleManeuvers, driverF, metrics.total);
 
   useEffectMS(() => {
     if (!voiceEnabled || (gpsEnabled ? gpsStatus !== 'active' : !playing) || document.visibilityState !== 'visible' || !speech.current) return;
-    const speechTurn = window.RouteSpeech.nextTurn(groupedManeuvers, driverF, metrics.total);
+    if (coverage.blocked) {
+      if (!warnedSegments.current.has(coverage.gap.id) && !speech.current.busy() && speech.current.speak(window.RouteCoverage.warning(coverage), 3)) warnedSegments.current.add(coverage.gap.id);
+      return;
+    }
+    const speechTurn = window.RouteSpeech.nextTurn(visibleManeuvers, driverF, metrics.total);
     const speed = gpsEnabled ? gpsSpeed.current : 30 / 3.6;
     const lead = window.RouteSpeech.arrivalLead(speed, speech.current.estimate(window.RouteSpeech.instruction(speechTurn)));
     const immediate = speechTurn && speechTurn.meters <= lead;
@@ -223,7 +237,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     const turnIndex = speechTurn ? groupedManeuvers.findIndex(m => m.f === speechTurn.f && m.kind === speechTurn.kind) : -1;
     const segmentMeters = turnIndex >= 0 ? (speechTurn.f - (turnIndex > 0 ? groupedManeuvers[turnIndex - 1].f : 0)) * metrics.total : undefined;
     const preparation = speechTurn ? `בעוד ${Math.round(speechTurn.meters / 10) * 10} מטר, ${window.RouteSpeech.instruction(speechTurn)}` : '';
-    if (arrivingStop && stopBeforeTurn) {
+    if (arrivingStop && stopBeforeTurn && !stopBeyondGap) {
       const arrivalText = announcements.current.nextStop(nextStop, driverF, metrics.total, {nowMs: Date.now()});
       if (arrivalText) { speech.current.speak(arrivalText, 2); return; }
     }
@@ -231,7 +245,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
       arrivalMeters: lead, speedMps: speed, seconds: speech.current.estimate(preparation), nowMs: Date.now()
     });
     if (text) speech.current?.speak(text, immediate ? 2 : 1);
-    else if (!speech.current?.busy() && (!speechTurn || speechTurn.meters > 100)) {
+    else if (!stopBeyondGap && !speech.current?.busy() && (!speechTurn || speechTurn.meters > 100)) {
       const expectedStopText = 'המשיכו במסלול ועצרו בתחנה ' + window.RouteSpeech.stopLabel(nextStop) + ' בעוד 250 מטר';
       const untilTurn = speechTurn ? Math.max(0, speechTurn.meters - lead) / Math.max(1, speed) : Infinity;
       if (untilTurn < speech.current.estimate(expectedStopText) + 5) return;
@@ -241,7 +255,7 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
       });
       if (stopText) speech.current?.speak(stopText);
     }
-  }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total, speechTick, nextStop]);
+  }, [voiceEnabled, playing, gpsEnabled, gpsStatus, driverF, groupedManeuvers, metrics.total, speechTick, nextStop, coverageIntervals]);
 
   useEffectMS(() => { if (!playing) speech.current?.cancel(); }, [playing]);
 
@@ -253,9 +267,9 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
   const stationFirst = window.RouteSpeech.stationFirst(nextStop, driverF, metrics.total, upcomingMv);
   return (
     <div style={{ height: '100%', display: 'flex', flexDirection: 'column', background: 'var(--bg)' }}>
-      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={osrmStatus} gpsEnabled={gpsEnabled} />
+      <TripHeader route={route} trip={trip} dark={dark} onToggleDark={onToggleDark} onBack={onBack} osrmStatus={coverageIntervals.length ? 'weak' : osrmStatus} gpsEnabled={gpsEnabled} />
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, padding: '8px 14px', background: 'var(--surface)', color: 'var(--text)' }}>
-        <button disabled={gpsEnabled} onClick={() => { if (driverF >= 1) { announcements.current.reset(); setDriverF(0); } setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: gpsEnabled ? .5 : 1 }}>
+        <button disabled={gpsEnabled} onClick={() => { if (driverF >= 1) { warnedSegments.current.clear(); announcements.current.reset(); setDriverF(0); } setPlaying((p) => !p); }} style={{ border: 0, borderRadius: 10, padding: '10px 12px', background: 'var(--accent)', color: '#fff', fontWeight: 700, cursor: 'pointer', opacity: gpsEnabled ? .5 : 1 }}>
           {playing ? 'השהיית הדמיה' : 'הפעלת הדמיה'}
         </button>
         <input disabled={gpsEnabled} aria-label="מיקום בהדמיית המסלול" type="range" min="0" max="1" step="0.001" value={Math.min(1, driverF)} onChange={(e) => { seek(Number(e.target.value)); }} style={{ flex: 1, minWidth: 0, accentColor: 'var(--accent)' }} />
@@ -274,10 +288,14 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
 
         {/* floating navigation cue */}
         <div style={{ position: 'absolute', top: 12, left: 12, right: 12, zIndex: 600, pointerEvents: 'none' }}>
-          {stationFirst ? <div style={{background:'var(--accent)',color:'#fff',borderRadius:18,padding:'16px',pointerEvents:'auto'}}>
+          {coverage.blocked ? <div role="status" style={{background:'var(--surface)',color:'var(--text)',border:'2px solid #d49420',borderRadius:18,padding:16}}>
+            <div style={{fontSize:23,fontWeight:800}}>{coverage.active ? 'הוראות חלקיות במקטע הזה' : 'הוראות חלקיות במקטע הבא'}</div>
+            <div style={{fontSize:15,marginTop:6}}>אין הוראות פנייה מאומתות</div>
+            {nextStop && <div style={{marginTop:10}}>התחנה הבאה: {window.RouteSpeech.stopLabel(nextStop)}</div>}
+          </div> : stationFirst ? <div style={{background:'var(--accent)',color:'#fff',borderRadius:18,padding:'16px',pointerEvents:'auto'}}>
               <div style={{fontSize:14,fontWeight:700}}>התחנה הבאה · בעוד {fmtDist(metersToNext)}</div>
               <div style={{fontSize:28,fontWeight:800,lineHeight:1.2,marginTop:8,overflowWrap:'anywhere'}}>{window.RouteSpeech.stopLabel(nextStop)}</div>
-              <div style={{fontSize:17,marginTop:10}}>{osrmStatus === 'ok' ? 'המשיכו ישר ועצרו בתחנה' : 'המשיכו במסלול ועצרו בתחנה'}</div>
+              <div style={{fontSize:17,marginTop:10}}>{stopBeyondGap ? 'בהמשך המסלול מקטע עם הוראות חלקיות' : osrmStatus === 'ok' ? 'המשיכו ישר ועצרו בתחנה' : 'המשיכו במסלול ועצרו בתחנה'}</div>
               
             </div> : upcomingMv
             ? <div><ManeuverBanner mv={upcomingMv} />
