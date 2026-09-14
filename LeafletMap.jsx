@@ -1,4 +1,4 @@
-// Real interactive map (Leaflet) with a streets / satellite toggle.
+// Leaflet map using operator-hosted, openly licensed raster tiles.
 // Draws the route polyline, stop markers, and a live driver puck.
 const { useState: useStateLM, useEffect: useEffectLM, useRef: useRefLM, useMemo: useMemoLM } = React;
 
@@ -11,7 +11,7 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
   const puckRef = useRefLM(null);
   const fittedRef = useRefLM(false);
   const pausedRef = useRefLM(false);
-  const [base, setBase] = useStateLM('streets');
+  const [mapUnavailable, setMapUnavailable] = useStateLM(false);
   const [offCenter, setOffCenter] = useStateLM(false);
 
   const metrics = useMemoLM(() => window.Geo.polylineMetrics(geom), [geom]);
@@ -23,15 +23,18 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     map.attributionControl.setPrefix('');
     mapRef.current = map;
 
-    const streets = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png',
-      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
-    const streetsDark = L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/dark_all/{z}/{x}/{y}{r}.png',
-      { maxZoom: 20, subdomains: 'abcd', attribution: '© OpenStreetMap © CARTO' });
-    const sat = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 19, attribution: '© Esri, Maxar' });
-    const satLabels = L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Transportation/MapServer/tile/{z}/{y}/{x}',
-      { maxZoom: 19, opacity: 0.9 });
-    layersRef.current = { streets, streetsDark, sat, satLabels };
+    const config = window.DriverServices || {};
+    const streets = config.tilesUrl ? L.tileLayer(config.tilesUrl, {
+      maxZoom: 20, maxNativeZoom: config.maxNativeZoom || 18,
+      attribution: config.attribution,
+      updateWhenIdle: true, keepBuffer: 1,
+    }) : null;
+    if (streets) {
+      streets.on('tileerror', () => setMapUnavailable(true));
+      streets.on('tileload', () => setMapUnavailable(false));
+      streets.addTo(map);
+    } else setMapUnavailable(true);
+    layersRef.current = { streets };
     L.control.zoom({ position: 'topright' }).addTo(map);
     map.setView([32.08, 34.78], 14);
 
@@ -49,13 +52,11 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     return () => { clearTimeout(resizeTimer); window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.stop(); map.remove(); mapRef.current = null; };
   }, []);
 
-  // ── base layer switch ───────────────────────────────────────
+  // Darken only the raster pane: route and stop colors remain readable.
   useEffectLM(() => {
-    const map = mapRef.current; const L_ = layersRef.current; if (!map) return;
-    [L_.streets, L_.streetsDark, L_.sat, L_.satLabels].forEach((l) => l && map.hasLayer(l) && map.removeLayer(l));
-    if (base === 'satellite') { L_.sat.addTo(map); L_.satLabels.addTo(map); }
-    else { (dark ? L_.streetsDark : L_.streets).addTo(map); }
-  }, [base, dark]);
+    const pane = mapRef.current?.getPane('tilePane');
+    if (pane) pane.style.filter = dark ? 'brightness(0.6) saturate(0.75)' : '';
+  }, [dark]);
 
   // ── build route + stop markers when geometry changes ────────
   useEffectLM(() => {
@@ -116,7 +117,7 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
 
     if (follow && fittedRef.current === false) { map.setView(here, 16); fittedRef.current = true; }
     else if (follow && !pausedRef.current) { map.panTo(here, { animate: true, duration: 0.5 }); }
-  }, [driverF, focusStopId, metrics, follow, base]);
+  }, [driverF, focusStopId, metrics, follow]);
 
   const recenter = () => {
     const map = mapRef.current; if (!map || !puckRef.current) return;
@@ -139,19 +140,11 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
           <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 2v3M12 19v3M2 12h3M19 12h3"/></svg>
         </button>
       )}
-      {/* streets / satellite toggle */}
-      <div style={{ position: 'absolute', bottom: toggleBottom, insetInlineStart: 12, zIndex: 500, display: 'flex', background: 'var(--surface, #fff)', borderRadius: 11, padding: 3, boxShadow: '0 2px 10px rgba(0,0,0,0.25)', gap: 2 }}>
-        {[['streets', 'מפה'], ['satellite', 'לוויין']].map(([k, label]) => (
-          <button key={k} onClick={() => setBase(k)} style={{
-            border: 'none', cursor: 'pointer', fontFamily: 'inherit', fontWeight: 700, fontSize: 13,
-            padding: '7px 14px', borderRadius: 8,
-            background: base === k ? 'var(--accent, #1F5EE0)' : 'transparent',
-            color: base === k ? '#fff' : 'var(--text-mut, #5B6472)',
-          }}>{label}</button>
-        ))}
-      </div>
+      {mapUnavailable && <div role="status" style={{ position: 'absolute', bottom: toggleBottom, insetInlineStart: 12, zIndex: 500, background: 'var(--surface, #fff)', color: 'var(--text, #222)', padding: '6px 10px', borderRadius: 8, fontSize: 12 }}>מפת הרקע אינה זמינה</div>}
+
     </div>
   );
 }
 
 window.LeafletMap = LeafletMap;
+

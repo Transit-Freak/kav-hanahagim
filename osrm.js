@@ -10,7 +10,7 @@
    window.OSRM.maneuvers(geom, { server }) -> { ok, maneuvers:[{f,kind,exit,name,text}], ... }
 */
 (function () {
-  const DEFAULT_SERVER = 'https://router.project-osrm.org';
+  const DEFAULT_SERVER = window.DriverServices?.osrmUrl || '';
 
   const MOD_TURN = {
     'left': 'left', 'slight left': 'left', 'sharp left': 'left',
@@ -46,6 +46,7 @@
   async function maneuvers(geom, opts) {
     opts = opts || {};
     const server = (opts.server || DEFAULT_SERVER).replace(/\/+$/, '');
+    if (!server) return { ok: false, reason: 'server-not-configured' };
     const metrics = window.Geo.polylineMetrics(geom || []);
     if (metrics.pts.length < 2) return { ok: false, reason: 'no-geom' };
 
@@ -89,3 +90,4 @@
 
   window.OSRM = { maneuvers, DEFAULT_SERVER };
 })();
+
