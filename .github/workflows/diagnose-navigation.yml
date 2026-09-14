@@ -1,0 +1,30 @@
+name: Diagnose prepared navigation
+on:
+  push:
+    branches: [diagnose-navigation]
+permissions:
+  contents: read
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          repository: Transit-Freak/kav-bochan
+          ref: nahagim-data
+      - name: Inspect Yavne and feed coverage
+        run: |
+          python3 - <<'PY'
+          import gzip,json,pathlib,collections
+          for rid in ['1','2']:
+              d=json.load(gzip.open('routes/'+rid+'.json.gz'))
+              print('YAVNE',rid,'turns',len(d['maneuvers']),'NAV',json.dumps(d['nav']))
+          reasons=collections.Counter()
+          blocked=0
+          for p in pathlib.Path('routes').glob('*.json.gz'):
+              d=json.load(gzip.open(p))
+              seg=d.get('nav',{}).get('uncertainSegments',[])
+              reasons.update(s.get('reason','') for s in seg)
+              if sum(s['to']-s['from'] for s in seg)>.95: blocked+=1
+          print('ALL_FEED',dict(reasons),'over95percentBlocked',blocked)
+          PY
