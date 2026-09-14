@@ -42,3 +42,29 @@ test('keep missing exits when supplied exits conflict or refer to another positi
   for(const exit of [-1,1.5,'2']) assert.equal(nav.prepare([missing,{...missing,exit}]).length,2);
   assert.equal(nav.prepare([missing,{f:.2,kind:'right',exit:2}]).length,2);
 });
+
+const fs=require('node:fs'),vm=require('node:vm');
+const geoContext={window:{}};
+vm.runInNewContext(fs.readFileSync(require.resolve('../geo.js'),'utf8'),geoContext);
+const Geo=geoContext.window.Geo, speech=require('../speech.js');
+for(const id of ['16558','16579','16687']) test(`Kastina ${id}: entrance precedes terminal and is spoken before entry`,()=>{
+ const d=require(`./fixtures/kastina/${id}.json`), metrics=Geo.polylineMetrics(d.geom);
+ const context={metrics,stops:d.trip.stops}, snapshot=JSON.stringify(d);
+ const rows=nav.prepare(d.maneuvers,metrics.total,context);
+ const added=rows.filter(m=>m.source==='verified-osm-114696253');
+ assert.equal(added.length,1);
+ const m=added[0],stop=d.trip.stops.find(s=>s.code==='11168');
+ assert((stop.f-m.f)*metrics.total>35);
+ assert.equal(nav.next(rows,m.f-50/metrics.total,metrics.total).source,m.source);
+ assert.equal(speech.instruction(speech.nextTurn(rows,m.f-30/metrics.total,metrics.total)),'פנו ימינה');
+ assert.equal(nav.prepare(rows,metrics.total,context).length,rows.length);
+ assert.equal(JSON.stringify(d),snapshot);
+ // Reverse traversal and a shifted parallel road must not receive an entrance.
+ for(const geom of [[...d.geom].reverse(),d.geom.map(p=>[p[0]+.001,p[1]])]) {
+   const other=Geo.polylineMetrics(geom);
+   assert.equal(nav.prepare([],other.total,{metrics:other,stops:d.trip.stops}).length,0);
+ }
+ assert.equal(nav.prepare([],metrics.total,{metrics,stops:[]}).length,0);
+ const existing={f:m.f,kind:'right'};
+ assert.deepEqual(nav.prepare([existing],metrics.total,context).map(r=>r.kind),['right']);
+});

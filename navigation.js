@@ -2,7 +2,34 @@
    are used: route geometry alone cannot identify a junction or its exits. */
 (function (root) {
   const kinds = new Set(['left', 'right', 'keep-left', 'keep-right', 'roundabout']);
-  function prepare(maneuvers, totalMeters) {
+  // Verified OSM junction: Highway 3 -> bus-only way 114696253,
+  // entry node 5404184308. Geometry verifies traversal; it does not invent a turn.
+  function verifiedEntrances(maneuvers, context) {
+    const rows = Array.isArray(maneuvers) ? maneuvers : [];
+    const metrics = context?.metrics;
+    const stop = context?.stops?.find(s => String(s.code) === '11168');
+    if (!metrics || !stop || !Number.isFinite(stop.f)) return rows;
+    const checkpoints = [[31.73146,34.7555], [31.7317933,34.7559114],
+      [31.731719,34.7563344], [31.7313174,34.7564575]];
+    const fractions = checkpoints.map(p => metrics.locate(...p));
+    const close = checkpoints.every((p,i) => {
+      const q = metrics.pointAt(fractions[i]);
+      return Math.hypot((p[0]-q[0])*111195,(p[1]-q[1])*94580) <= 12;
+    });
+    if (!close || fractions.some((f,i) => i && f <= fractions[i-1])) return rows;
+    const [approach, entry, inside, end] = fractions;
+    const span = (end-approach)*metrics.total;
+    const stopDistance = (stop.f-entry)*metrics.total;
+    if (span < 100 || span > 190 || stopDistance < 35 || stopDistance > 100 ||
+        stop.f < inside || stop.f > end) return rows;
+    // Leave an existing instruction at this junction intact, including conflicts.
+    if (rows.some(m => Number.isFinite(m.f) && Math.abs(m.f-entry)*metrics.total < 20)) return rows;
+    return [...rows, {f:entry, kind:'right',
+      text:'פנו ימינה',
+      source:'verified-osm-114696253'}];
+  }
+  function prepare(maneuvers, totalMeters, context) {
+    maneuvers = verifiedEntrances(maneuvers, context);
     const rows = (Array.isArray(maneuvers) ? maneuvers : [])
       .filter((m) => m && kinds.has(m.kind) && Number.isFinite(m.f) && m.f >= 0 && m.f <= 1)
       .map((m) => ({ ...m, then: kinds.has(m.then) ? m.then : undefined }))

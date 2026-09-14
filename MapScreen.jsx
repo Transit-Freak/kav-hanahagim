@@ -204,8 +204,8 @@ function MapScreen({ route, trip, geom, maneuvers: maneuversProp = [], navSource
     : (osrmStatus === 'ok' ? osrmManeuvers : maneuversProp);
 
   const groupedManeuvers = useMemoMS(
-    () => window.RouteNavigation.prepare(activeManeuvers, metrics.total),
-    [activeManeuvers, metrics.total]);
+    () => window.RouteNavigation.prepare(activeManeuvers, metrics.total, {metrics, stops}),
+    [activeManeuvers, metrics, stops]);
   const upcomingMv = gpsEnabled && gpsStatus !== 'active' ? null : window.RouteNavigation.next(groupedManeuvers, driverF, metrics.total);
 
   useEffectMS(() => {
