@@ -168,21 +168,12 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload, search, on
   const onKey = (k) => {
     if (k === 'back') setQ((v) => v.slice(0, -1));
     else if (k === 'clear') setQ('');
-    else setQ((v) => (v.length >= 6 ? v : v + k));
+    else setQ((v) => (v.length >= 80 ? v : v + k));
   };
 
   // Search all routes, but render only one page to keep return navigation fast.
-  let filtered, total;
-  if (!q) {
-    filtered = allRoutes;
-    total = allRoutes.length;
-  } else {
-    const matches = allRoutes.filter((r) =>
-      mode === 'line' ? String(r.shortName || '').startsWith(q)
-        : (String(r.makat || '').startsWith(q) || String(r.id || '').startsWith(q)));
-    total = matches.length;
-    filtered = matches;
-  }
+  let filtered = window.RouteSearch.search(allRoutes, q, mode);
+  const total = filtered.length;
 
   const pageSize = 40;
   const currentPage = Math.min(page, Math.max(0, Math.ceil(total / pageSize) - 1));
@@ -203,7 +194,7 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload, search, on
           </div>
         )}
         <Segmented value={mode} onChange={(v) => { setMode(v); setQ(''); }}
-          options={[{ value: 'line', label: 'מספר קו' }, { value: 'makat', label: 'מק״ט' }]} />
+          options={[{ value: 'line', label: 'קו ועיר' }, { value: 'makat', label: 'מק״ט' }]} />
 
         {/* query display */}
         <div style={{
@@ -213,10 +204,10 @@ function SearchScreen({ dark, onToggleDark, onSelect, feed, onUpload, search, on
         }}>
           <IconSearch size={22} style={{ color: 'var(--text-mut)' }} />
           <input
-            aria-label={mode === 'line' ? 'מספר קו' : 'מק״ט'}
-            placeholder={mode === 'line' ? 'הקלד מספר קו' : 'הקלד מק״ט'}
-            type="text" inputMode="numeric" autoComplete="off" maxLength={6}
-            value={q} onChange={(e) => setQ(e.target.value.replace(/[^0-9א-תa-zA-Z]/g, '').slice(0, 6))}
+            aria-label={mode === 'line' ? 'חיפוש לפי קו ועיר' : 'מק״ט'}
+            placeholder={mode === 'line' ? 'למשל: 1 יבנה' : 'הקלד מק״ט'}
+            type="text" inputMode={mode === 'line' ? 'text' : 'numeric'} autoComplete="off" maxLength={80}
+            value={q} onChange={(e) => setQ(e.target.value.slice(0, 80))}
             style={{ flex: 1, minWidth: 0, width: '100%', border: 0, outlineOffset: 4, background: 'transparent', fontFamily: 'inherit', fontWeight: 800, fontSize: 24, color: 'var(--text)' }}
           />
           {q && <button aria-label="ניקוי החיפוש" onClick={() => setQ('')} style={{ border: 'none', background: 'var(--chip)', borderRadius: 99, width: 28, height: 28, display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', color: 'var(--text-mut)' }}><IconX size={16} /></button>}

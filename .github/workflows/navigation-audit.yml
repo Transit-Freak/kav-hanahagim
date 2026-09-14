@@ -3,6 +3,8 @@ on:
   push:
     paths:
       - 'navigation.js'
+      - 'search.js'
+      - 'screens.jsx'
       - 'speech.js'
       - 'wake-lock.js'
       - 'gps.js'
@@ -25,7 +27,7 @@ jobs:
         with:
           node-version: '22'
       - name: Regression tests
-        run: node --test tests/navigation.test.cjs tests/speech.test.cjs tests/wake-lock.test.cjs tests/gps.test.cjs
+        run: node --test tests/navigation.test.cjs tests/speech.test.cjs tests/wake-lock.test.cjs tests/gps.test.cjs tests/search.test.cjs
       - uses: actions/checkout@v4
         with:
           repository: Transit-Freak/kav-bochan
