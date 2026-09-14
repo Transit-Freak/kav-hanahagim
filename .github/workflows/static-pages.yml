@@ -1,9 +1,9 @@
-name: Open-map development preview
+name: Static open-map Pages
 on:
   workflow_dispatch:
   push:
-    branches: [main]
-    paths: ['.github/workflows/development-preview.yml']
+    branches: [main, open-commercial-services]
+    paths: ['**.js', '**.jsx', '**.html', 'tools/static-map.py', 'tools/map-assets.py', 'tools/map-style.cjs', '.github/workflows/static-pages.yml']
 permissions:
   contents: read
   actions: read
@@ -18,8 +18,6 @@ jobs:
     timeout-minutes: 25
     steps:
       - uses: actions/checkout@v4
-        with:
-          ref: 1a6983a38448d6e947a2410253506655ff0fd08f
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -56,16 +54,6 @@ jobs:
           cp THIRD_PARTY.md sample-gtfs.zip _site/
           touch _site/.nojekyll
           python -c "from pathlib import Path; size=sum(p.stat().st_size for p in Path('_site').rglob('*') if p.is_file()); print(size); assert size < 900_000_000"
-      - uses: actions/checkout@v4
-        with:
-          ref: main
-          path: legacy
-      - name: Preserve current site and add isolated preview
-        run: |
-          mv _site /tmp/new-map-preview
-          mkdir _site
-          git -C legacy archive HEAD | tar -x -C _site
-          mv /tmp/new-map-preview _site/open-map-preview
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

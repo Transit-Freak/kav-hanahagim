@@ -24,3 +24,21 @@ is staged separately until operator-owned endpoints exist. The current live serv
 is not declared commercially cleared. GTFS, hosting, voice-provider terms and
 transitive dependencies remain outstanding; see docs/open-services-migration.md
 in the migration branch. Do not assign a license to user-authored code by inference.
+
+## Static development maps (2026-09-14)
+
+Reviewed against the confirmed free, open-code Israel bus-navigation profile. No hosted map account is introduced.
+
+| Component | Pinned version | License and retained notice |
+|---|---|---|
+| MapLibre GL JS | 5.6.1 | BSD-3-Clause; vendor build's bundled notices copied to licenses/MapLibre.txt |
+| MapLibre Leaflet binding | 0.1.0 | ISC; licenses/MapLibre-Leaflet.txt |
+| Protomaps styles | 5.7.2 | BSD-3-Clause; licenses/Protomaps-basemaps.txt |
+| RTL text plugin | 0.2.3 | BSD-2-Clause; licenses/RTL-text.txt (includes third-party notices) |
+| Noto map glyphs | basemaps-assets commit 028c18f713baecad011301ff7a69acc39bcc2ae7 | OFL-1.1; licenses/Map-fonts.txt |
+| Regional map snapshot | Protomaps 20260913 | ODbL produced work; visible OSM attribution required |
+| Python PMTiles reader | 3.5.0, build only | BSD-3-Clause |
+| go-pmtiles | 1.31.2, build only | BSD-3-Clause |
+
+Original sources: https://github.com/maplibre/maplibre-gl-js ; https://github.com/maplibre/maplibre-gl-leaflet ; https://github.com/protomaps/basemaps ; https://github.com/mapbox/mapbox-gl-rtl-text ; https://github.com/protomaps/PMTiles ; https://github.com/protomaps/go-pmtiles .
+The build verifies each new npm package's declared license against the reviewed expected license and validates tarball integrity. This check is not a full legal audit of transitive dependencies. Map and style/font files are served from our Pages site, not provider runtime APIs. Keep notices when redistributing generated assets.
