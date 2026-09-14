@@ -1,0 +1,81 @@
+name: Open-map development preview
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ['.github/workflows/development-preview.yml']
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+concurrency:
+  group: static-open-map-pages
+  cancel-in-progress: false
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: dc89b9e3d6a9195032fee0488780cd14981732d7
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Navigation regression tests
+        run: node --test tests/*.test.cjs
+      - name: Open archive reader
+        run: pip install pmtiles==3.5.0
+      - uses: actions/cache@v4
+        with:
+          path: israel.pmtiles
+          key: protomaps-20260913-israel-z14
+      - name: Extract regional openly licensed map
+        run: |
+          set -euo pipefail
+          if [ ! -f israel.pmtiles ]; then
+            curl -fL --retry 3 https://github.com/protomaps/go-pmtiles/releases/download/v1.31.2/go-pmtiles_1.31.2_Linux_x86_64.tar.gz -o /tmp/pmtiles.tar.gz
+            mkdir -p /tmp/pmtiles-bin
+            tar -xzf /tmp/pmtiles.tar.gz -C /tmp/pmtiles-bin
+            /tmp/pmtiles-bin/pmtiles extract https://build.protomaps.com/20260913.pmtiles israel.pmtiles --bbox=34.2,29.4,35.95,33.5 --maxzoom=14 --quiet
+          fi
+          python tools/static-map.py israel.pmtiles maps/tiles
+      - name: Prepare licensed map code, fonts and Hebrew styles
+        run: |
+          python tools/map-assets.py
+          node tools/map-style.cjs
+      - name: Assemble static site
+        run: |
+          mkdir _site
+          cp *.html *.js *.jsx _site/
+          cp -r maps vendor licenses docs _site/
+          cp THIRD_PARTY.md sample-gtfs.zip _site/
+          touch _site/.nojekyll
+          python -c "from pathlib import Path; size=sum(p.stat().st_size for p in Path('_site').rglob('*') if p.is_file()); print(size); assert size < 900_000_000"
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          path: legacy
+      - name: Preserve current site and add isolated preview
+        run: |
+          mv _site /tmp/new-map-preview
+          mkdir _site
+          git -C legacy archive HEAD | tar -x -C _site
+          mv /tmp/new-map-preview _site/open-map-preview
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Deploy static files
+        id: deployment
+        uses: actions/deploy-pages@v4
