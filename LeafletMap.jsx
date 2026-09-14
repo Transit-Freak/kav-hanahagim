@@ -22,6 +22,7 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     const map = L.map(elRef.current, { zoomControl: false, attributionControl: true, zoomSnap: 0.25 });
     map.attributionControl.setPrefix('');
     mapRef.current = map;
+    map.setView([32.08, 34.78], 14);
 
     const streets = L.maplibreGL({
       style: window.DriverMapStyle(dark),
