@@ -3,7 +3,6 @@ on:
   workflow_dispatch:
   push:
     branches: [main, open-commercial-services]
-    paths: ['**.js', '**.jsx', '**.html', 'tools/static-map.py', 'tools/map-assets.py', 'tools/map-style.cjs', '.github/workflows/static-pages.yml']
 permissions:
   contents: read
   actions: read
