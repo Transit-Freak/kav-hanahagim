@@ -25,7 +25,13 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     map.setView([32.08, 34.78], 14);
 
     let streets;
-    if (window.maplibregl?.supported()) {
+    let hasWebGL = false;
+    try {
+      const context = document.createElement('canvas').getContext('webgl2');
+      hasWebGL = !!context;
+      context?.getExtension('WEBGL_lose_context')?.loseContext();
+    } catch (_) { /* unsupported device: keep route overlays usable */ }
+    if (window.maplibregl && hasWebGL) {
     streets = L.maplibreGL({
       style: window.DriverMapStyle(dark),
       attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · <a href="https://protomaps.com">Protomaps</a>',
