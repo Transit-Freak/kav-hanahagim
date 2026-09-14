@@ -23,17 +23,14 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     map.attributionControl.setPrefix('');
     mapRef.current = map;
 
-    const config = window.DriverServices || {};
-    const streets = config.tilesUrl ? L.tileLayer(config.tilesUrl, {
-      maxZoom: 20, maxNativeZoom: config.maxNativeZoom || 18,
-      attribution: config.attribution,
-      updateWhenIdle: true, keepBuffer: 1,
-    }) : null;
-    if (streets) {
-      streets.on('tileerror', () => setMapUnavailable(true));
-      streets.on('tileload', () => setMapUnavailable(false));
-      streets.addTo(map);
-    } else setMapUnavailable(true);
+    const streets = L.maplibreGL({
+      style: window.DriverMapStyle(dark),
+      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap contributors</a> · <a href="https://protomaps.com">Protomaps</a>',
+      interactive: false,
+    }).addTo(map);
+    const gl = streets.getMaplibreMap();
+    gl.on('error', () => setMapUnavailable(true));
+    gl.on('idle', () => setMapUnavailable(false));
     layersRef.current = { streets };
     L.control.zoom({ position: 'topright' }).addTo(map);
     map.setView([32.08, 34.78], 14);
@@ -52,10 +49,9 @@ function LeafletMap({ geom = [], stops = [], driverF = 0, focusStopId = null, fo
     return () => { clearTimeout(resizeTimer); window.removeEventListener('resize', onResize); if (ro) ro.disconnect(); map.stop(); map.remove(); mapRef.current = null; };
   }, []);
 
-  // Darken only the raster pane: route and stop colors remain readable.
   useEffectLM(() => {
-    const pane = mapRef.current?.getPane('tilePane');
-    if (pane) pane.style.filter = dark ? 'brightness(0.6) saturate(0.75)' : '';
+    const gl = layersRef.current.streets?.getMaplibreMap();
+    if (gl) gl.setStyle(window.DriverMapStyle(dark));
   }, [dark]);
 
   // ── build route + stop markers when geometry changes ────────

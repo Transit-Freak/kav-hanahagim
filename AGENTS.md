@@ -14,6 +14,13 @@ Before adding or upgrading a dependency:
 - Do not configure CARTO, Esri imagery or a public routing demo as implicit fallbacks.
 - Never label the whole project legally cleared while data or hosting rights remain unresolved.
 
-The pending service migration must not be deployed with empty tile configuration.
+Development hosting stays on GitHub Pages per user instruction. No new server is required for static maps and prepared navigation data. Verify the generated map artifact before replacing the live site.
 Complete the deployment checks in docs/open-services-migration.md first.
 Do not change or relicense user-owned code or unrelated websites.
+
+## Required intended-use reference
+Read docs/intended-use.md before every dependency/service addition or upgrade.
+Evaluate licenses and service terms against its real-time professional bus navigation,
+free public access, open-code distribution, Israel-only scope, unknown scale and
+no-driver-tracking requirements. Keep the reference updated only from confirmed user
+answers; record unresolved questions explicitly. Log each review in THIRD_PARTY.md.

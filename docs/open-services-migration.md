@@ -1,42 +1,16 @@
-# Open service migration — prepared, not deployed
+# Development migration using GitHub Pages
 
-2026-09-14. The live site is not changed by this draft.
+User confirmed 2026-09-14: this is still development; retain GitHub Pages and do not require a new server.
 
-Changes: remove CARTO raster tiles and Esri imagery/labels; retain Leaflet and all
-route overlays. Remove the satellite toggle. Remove implicit public OSRM fallback.
-Ready-made route instructions from the existing feed still work. Manual GTFS
-live instruction generation requires the configured operator OSRM endpoint.
-Dark mode dims only the raster pane. No new map library is introduced.
+- Map background: Protomaps regional OSM-derived static vector tiles, extracted from the 2026-09-13 archive, bbox 34.2,29.4,35.95,33.5, zoom 0–14. Higher display zoom uses overzoomed vector geometry. This is a dated snapshot, not live road updates.
+- Build: GitHub Actions downloads only the regional subset, exports uncompressed XYZ files and hosts them with the site. Browsers never hotlink the planet archive or call CARTO, Esri or a public routing demo.
+- Map renderer: MapLibre GL JS with the Leaflet binding; existing route, stops, recentering and driver overlays remain Leaflet objects. Light/dark styles use Hebrew labels. Satellite mode is removed.
+- Prepared navigation data continue to load from the project's existing feed. Pages cannot run a live OSRM process. Manually uploaded GTFS has no automatic live routing fallback without an explicitly configured endpoint; this must remain visible as partial/unavailable instructions.
+- The map export was locally measured at 23,937 tiles, 120,615,422 bytes, before code/font assets. The deployment checks total size below 900 MB. Pages has a 1 GB site limit and a 100 GB/month soft traffic limit; this is not an unlimited-scale commitment.
+- No new server, paid plan, API account, or age-restricted hosted map service is required.
 
-## Deployment requirements
+The workflow first builds a Pages artifact on the migration branch without replacing the live site. Merge only after the map and Hebrew labels are verified. A Pages deployment setting may need to select GitHub Actions if the existing site still enforces branch-only builds; do not report deployment success until the live URL is checked.
 
-1. Provision an operator-owned raster tile service built from openly licensed OSM
-   data and an open renderer, e.g. a renderd/mod_tile deployment with openstreetmap-carto.
-   Review and retain each renderer/style/data license and attribution. Do not copy
-   tiles from CARTO, Esri, or public OSM tile servers into this service.
-2. Configure tilesUrl and maxNativeZoom in services.js. Use HTTPS and correct CORS
-   when applicable. Include all required style/data credits in attribution.
-3. Provision OSRM from its BSD-licensed source, load an OSM extract, configure HTTPS,
-   rate limits and CORS; set osrmUrl. Use operator infrastructure, not a public demo.
-   The upstream feed generator already has a separate OSRM deployment; browser access
-   to it has not been established and it is not assumed to be publicly reachable.
-4. Verify tile loading in Israel, Hebrew labels, night mode, stop/route overlay,
-   recentering and a manual GTFS request. Verify normal prepared feed instructions.
-5. Run node --test tests/*.test.cjs and compile JSX before merging the draft.
+Licensing policy and intended-use checks remain mandatory. This migration resolves identified map-service dependencies, not all legal questions. GTFS feed-specific rights, speech voice provider terms and original application license remain unresolved. The site does not add driver tracking; infrastructure request logs are distinct and must not be described as nonexistent.
 
-No server/account was purchased or provisioned. Empty configuration deliberately
-makes no requests and reports a missing background; it is not a production replacement.
-
-## Unresolved rights
-
-GTFS feed-specific license, existing speech voice provider terms and production
-hosting eligibility still require separate confirmation. Browser speechSynthesis is
-an API, not a license to redistribute every installed voice or recording. UNPKG and
-Google Fonts delivery services have their own terms beyond the code/font licenses.
-The dependency policy is not a legal opinion or a complete transitive SBOM.
-
-Sources:
-- https://carto.com/legal/basemap-terms/ (section 14)
-- https://www.openstreetmap.org/copyright
-- https://github.com/Project-OSRM/osrm-backend/blob/master/LICENSE.TXT
-- https://switch2osm.org/serving-tiles/
+Sources: https://docs.protomaps.com/basemaps/downloads ; https://docs.protomaps.com/basemaps/maplibre ; https://docs.github.com/en/pages/getting-started-with-github-pages/github-pages-limits
