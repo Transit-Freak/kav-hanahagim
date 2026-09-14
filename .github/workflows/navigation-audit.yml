@@ -10,6 +10,7 @@ on:
       - 'gps.js'
       - 'MapScreen.jsx'
       - 'tools/audit-navigation.cjs'
+      - 'tools/audit-terminals.cjs'
       - 'tests/**'
       - '.github/workflows/navigation-audit.yml'
   workflow_dispatch:
@@ -36,9 +37,13 @@ jobs:
           persist-credentials: false
       - name: Check every indexed route and replay navigation
         run: node tools/audit-navigation.cjs feed navigation-audit.json
+      - name: Screen terminal approaches and cross-route disagreements
+        run: node tools/audit-terminals.cjs feed terminal-audit.json
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: navigation-audit
-          path: navigation-audit.json
+          path: |
+            navigation-audit.json
+            terminal-audit.json
           retention-days: 30
