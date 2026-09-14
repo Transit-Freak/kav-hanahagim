@@ -6,6 +6,7 @@ on:
     paths: ['.github/workflows/development-preview.yml']
 permissions:
   contents: read
+  actions: read
   pages: write
   id-token: write
 concurrency:
@@ -18,7 +19,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: 6105c8af59be0b824365a2d4d1fbe80aaf341ae0
+          ref: 1a6983a38448d6e947a2410253506655ff0fd08f
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -76,6 +77,19 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     steps:
+      - name: Wait for legacy Pages deployment of this commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          SHA: ${{ github.sha }}
+        run: |
+          for attempt in $(seq 1 60); do
+            pending=$(gh api "repos/$REPO/actions/runs?head_sha=$SHA&per_page=100" --jq '[.workflow_runs[] | select(.name == "pages build and deployment" and .status != "completed")] | length')
+            if [ "$pending" = "0" ]; then exit 0; fi
+            sleep 10
+          done
+          echo 'Legacy deployment did not finish; keeping the current site.'
+          exit 1
       - name: Deploy static files
         id: deployment
         uses: actions/deploy-pages@v4
